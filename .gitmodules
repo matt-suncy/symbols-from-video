@@ -1,0 +1,3 @@
+[submodule "src/FuseDream"]
+	path = src/FuseDream
+	url = https://github.com/gnobitab/FuseDream.git

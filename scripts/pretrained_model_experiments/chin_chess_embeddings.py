@@ -1,1 +1,1 @@
-# First state change finishes at frame 79/80
+# First state transition at frame 41/42 to frame 79/80
