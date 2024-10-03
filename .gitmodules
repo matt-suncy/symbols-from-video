@@ -1,6 +1,6 @@
 [submodule "src/FuseDream_submodule"]
 	path = src/FuseDream_submodule
 	url = https://github.com/matt-suncy/FuseDream_submodule.git
-[submodule "src/GALIP_submodule"]
-	path = src/GALIP_submodule
-	url = https://github.com/matt-suncy/GALIP_submodule.git
+[submodule "src/GACLIP_submodule"]
+	path = src/GACLIP_submodule
+	url = https://github.com/matt-suncy/GACLIP_submodule.git
