@@ -40,4 +40,5 @@ Thumbs.db
 ############
 /home/jovyan/Documents/latplan-temporal-segmentation/videos/frames
 *.jpg
+*.png
 *.mp4
