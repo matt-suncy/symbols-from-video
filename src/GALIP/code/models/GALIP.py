@@ -1,10 +1,15 @@
 ####### 生成器，判别器未采用残差
+# Add sys path for lib
+# import sys
+# sys.path.insert(0, "../")
+
+
 import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from collections import OrderedDict
-from lib.utils import dummy_context_mgr
+from ..lib.utils import dummy_context_mgr
 
 
 class CLIP_IMG_ENCODER(nn.Module):
