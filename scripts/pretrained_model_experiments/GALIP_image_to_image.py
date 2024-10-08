@@ -42,7 +42,7 @@ if __name__ == "__main__":
     noise = torch.randn((batch_size, 100)).to(device) # Don't really understand why there needs to be noise
 
     # Text prompt
-    captions = ['Line drawing illustration of a kawaii cute ghost.']
+    captions = ['An overhead shot of a chessboard']
     
     # CHANGE current directory for 'samples' folder
     this_file_path = os.path.dirname(os.path.abspath(__file__))
