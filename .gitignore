@@ -38,7 +38,7 @@ Thumbs.db
 
 # Raw Data #
 ############
-/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames
+/home/jovyan/Documents/latplan-temporal-segmentation/videos
 *.jpg
 *.png
 *.mp4
