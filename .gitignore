@@ -45,3 +45,7 @@ Thumbs.db
 *.webp
 *.jpeg
 *.gif
+
+# Weights #
+###########
+*.ckpt
