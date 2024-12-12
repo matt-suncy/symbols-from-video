@@ -1,9 +1,18 @@
+'''
+Author: Matthew Sun
+Description: Implementing a simple version of a Recurrent Binary Variational Autoencoder, 
+purpose is to figure out the details of the architecture
+'''
+
+
+### IMPORTS
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
+###
 
 
 def sample_gumbel(shape, eps=1e-20):
@@ -26,7 +35,7 @@ def gumbel_softmax_logits(logits, temperature=1.0, hard=False):
 
     # Create uniform logistic noise
     U = torch.rand_like(logits)
-    noise = torch.log(U + 1e-20) - torch.log(1- U + 1e-20)
+    noise = torch.log(U + 1e-20) - torch.log(1- U + 1e-20) # Small vals to avoid div by 0
 
     # Add noise
     y = (logits + noise) / temperature
@@ -35,7 +44,7 @@ def gumbel_softmax_logits(logits, temperature=1.0, hard=False):
     if hard:
         # Discretized outputs
         y_hard = (y > 0.5).float()
-        y = (y_hard - y).detach() + y # detach() to not mess up gradients
+        y = (y_hard - y).detach() + y # detach() trick to not mess up gradients
 
     return y
 
