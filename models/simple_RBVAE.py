@@ -66,6 +66,8 @@ def gumbel_softmax_logits(logits, temperature=1.0, hard=False):
         y = (y_hard - y).detach() + y # detach() trick to not mess up gradients
     return y
 
+# NOTE: These NN classes will be written for Gumbel Softmax 
+# meaning two logits for each latent dimension hence shape of (n, latent_dim, 2)
 
 class ConvEncoder(nn.Module):
     def __init__(self, in_channels=3, latent_dim=32):
@@ -109,3 +111,15 @@ class ConvDecoder(nn.Module):
         h = h.view(h.size(0), 256, 8, 8)
         x_recon = self.deconv(h)
         return x_recon
+
+class EncoderRNN(nn.module):
+    # Should latent_dim == hidden_dim? probably right, we just want to capture temporal dependencies
+    def __init__(self, latent_dim=32, hidden_dim=32, num_layers=1):
+        super.__init__()
+        self.lstm = nn.LSTM(latent_dim, hidden_dim, num_layers, batch_first=True)
+
+    def forward(self, z_seq):
+        # z_seq: [B, T, latent_dim]
+        h_seq, (h_n, c_n) = self.lstm(z_seq)
+        # h_seq: [B, T, hidden_dim]
+        return h_seq, (h_n, c_n)
