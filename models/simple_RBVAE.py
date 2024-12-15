@@ -154,3 +154,62 @@ class Seq2SeqBinaryVAE(nn.Module):
     def forward(self, x, temperature=1.0, hard=False):
         # x: [B, T, C, H, W]
         B, T, C, H, W = x.size()
+
+        # Feed through conv encoder
+        x_reshaped = x.view(B*T, C, H, W)
+        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim, 2]
+
+        # Sample binary latent z (discretized form)
+        z_sample = gumbel_softmax_logits(logits, temperature=temperature, hard=hard)
+        # Extract probability of class '1': [B*T, latent_dim]
+        z = z_sample[..., 1]
+
+        # Reshape z => [B, T, latent_dim]
+        z_seq = z.view(B, T, self.latent_dim)   
+
+        # Feed through encoder RNN
+        h_seq, _ = self.encoder_rnn(z_seq) # [B, T, hidden_dim]
+
+        # Feed through decoder RNN
+        d_seq, _ = self.decoder_rnn(h_seq) # [B, T, latent_dim]
+
+        # Decode each d_t for reconstruction
+        d_seq_flat = d_seq.view(B*T, self.latent_dim)
+        x_recon = self.decoder_cnn(d_seq_flat)
+        x_recon = x_recon.view(B, T, C, H, W)
+
+        return x_recon, logits
+
+# LOSS FUNCTIONS
+
+def recon_loss(x_recon, x):
+    return F.mse_loss(x_recon, x)
+
+def kl_binary(q_logits):
+    q = F.softmax(q_logits, dim=-1) # [B*T, latent_dim, 2]
+    # KL(q||p) with p=uniform(0.5,0.5):
+    # NOTE: This will be changed to a Bernoulli distribution with a small value later
+    kl = q * (torch.log(q + 1e-20) - np.log(0.5))
+    kl = kl.sum(-1).sum(-1) # Sum over categories and latent dimensions 
+    return kl.mean()
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    temperature = 1.0
+
+    # Suppose you have a DataLoader yielding video sequences x: [B, T, C, H, W]
+    for epoch in range(10):
+        for x in dataloader:
+            x = x.to(device)
+            x_recon, logits = model(x, temperature=0.5, hard=False)
+            recon_loss_val = reconstruction_loss(x_recon, x)
+            kl_loss_val = kl_binary(logits)
+            loss = recon_loss_val + 0.1 * kl_loss_val
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        print(f"Epoch {epoch} - Loss: {loss.item()} Reconstruction: {recon_loss_val.item()} KL: {kl_loss_val.item()}")
