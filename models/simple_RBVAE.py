@@ -112,8 +112,10 @@ class ConvDecoder(nn.Module):
         x_recon = self.deconv(h)
         return x_recon
 
+
 class EncoderRNN(nn.module):
-    # Should latent_dim == hidden_dim? probably right, we just want to capture temporal dependencies
+    # Should latent_dim == hidden_dim? 
+    # Probably right? We just want to capture temporal dependencies so what's the point of expanding to more dimensions
     def __init__(self, latent_dim=32, hidden_dim=32, num_layers=1):
         super.__init__()
         self.lstm = nn.LSTM(latent_dim, hidden_dim, num_layers, batch_first=True)
@@ -122,4 +124,33 @@ class EncoderRNN(nn.module):
         # z_seq: [B, T, latent_dim]
         h_seq, (h_n, c_n) = self.lstm(z_seq)
         # h_seq: [B, T, hidden_dim]
-        return h_seq, (h_n, c_n)
+        return h_seq, (h_n, c_n)    
+
+
+class DecoderRNN(nn.Module):
+    def __init__(self,  hidden_dim=32, latent_dim=32, num_layers=1):
+        super().__init__()
+        # Decoder RNN maps from encoder hidden states to decoder states
+        # We'll feed the encoder h_seq as inputs directly (like teacher forcing)
+        self.lstm = nn.LSTM(hidden_dim, latent_dim, num_layers=num_layers, batch_first=True)
+    
+    def forward(self, h_seq):
+        # h_seq: [B, T, hidden_dim] from the encoder
+        # Decode by feeding h_seq into the decoder LSTM
+        d_seq, (d_n, c_n) = self.lstm(h_seq)
+        # d_seq: [B, T, latent_dim]
+        return d_seq
+
+
+class Seq2SeqBinaryVAE(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.encoder_cnn = ConvEncoder(in_channels, latent_dim)
+        self.decoder_cnn = ConvDecoder(out_channels, latent_dim)
+        self.encoder_rnn = EncoderRNN(latent_dim=latent_dim, hidden_dim=hidden_dim)
+        self.decoder_rnn = DecoderRNN(hidden_dim=hidden_dim, latent_dim=latent_dim)
+
+    def forward(self, x, temperature=1.0, hard=False):
+        # x: [B, T, C, H, W]
+        B, T, C, H, W = x.size()
