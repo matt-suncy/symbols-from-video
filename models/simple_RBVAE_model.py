@@ -13,7 +13,7 @@ import torchvision.transforms as T
 import numpy as np
 ###
 
-# NOTE: I think eventually, BC is what we actually wanna use.
+# NOTE: I think eventually, BC is what we wanna use.
 def binary_concrete_logits(logits, temperature=1.0, hard=False):
     """
     logits: [batch, latent_dim] 
@@ -21,10 +21,10 @@ def binary_concrete_logits(logits, temperature=1.0, hard=False):
     temperature: float 
        Controls the 'smoothness' of the samples.
     hard: bool 
-       If True, use straight-through estimation to produce hard samples.
+        Controls whether samples are discretized or not
 
     Returns:
-       y: [batch, latent_dim] samples ~ Bernoulli(logits)
+       y: [batch, latent_dim]
           Differentiable approximation using Gumbel-Softmax trick.
     """
 
@@ -48,20 +48,21 @@ def sample_gumbel(shape, eps=1e-20):
     return -torch.log(-torch.log(U + eps) + eps)
 
 def gumbel_softmax_logits(logits, temperature=1.0, hard=False):
-     """
+    """
     Params:
         logits: [batch, categorical_dim]
         temperature: float
-                     Controls smoothness of outputs
+            Controls smoothness of outputs
         hard: Boolean
-              Control whether outputs are discretized or not
+            Controls whether outputs are discretized or not
 
     Returns: 
-        y: [batch, latent_dim, 2] samples
+        y: [batch, latent_dim, 2]
            Differentiable samples approximating one-hot vectors.
     """
     gumbels = sample_gumbel(logits.shape).to(logits.device)
     y = logits + gumbels
+    # TODO: Check during example training
     y = F.softmax(y / temperature, dim=-1)
 
     if hard:

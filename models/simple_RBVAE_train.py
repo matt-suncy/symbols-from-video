@@ -12,6 +12,8 @@ import numpy as np
 
 #### LOSS FUNCTIONS
 
+# TODO: Try L1 reg  
+
 def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
