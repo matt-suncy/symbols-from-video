@@ -14,6 +14,11 @@ import numpy as np
 
 # TODO: Try L1 reg  
 
+def l1_loss(q_logits, lamb):
+    # This should only be used if there is only 1 logit per latent variable
+    # Also I have no idea if q_logits needs to be reshaped or something
+    return lamb * torch.norm(q_logits, 1)
+
 def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
@@ -25,16 +30,8 @@ def kl_binary(q_logits):
     kl = kl.sum(-1).sum(-1) # Sum over categories and latent dimensions 
     return kl.mean()
 
-### DATA PREP   
-# NOTE: Arbitrary numbers right now
-STATE_SEGMENTS = [
-    (0, 40),   # State 0 covers frames [0..39]
-    (50, 90), # State 1 covers frames [50..89]
-    (100, 150) # State 2 covers frames [100..149]
-]   
-
-# This is a class
-image_transforms = T.Compose([
+# This is a CLASS
+ImageTransforms = T.Compose([
     T.Resize((512, 512)),
     T.ToTensor()
 ])
@@ -86,14 +83,25 @@ class StateSegmentDataset(Dataset):
         return frames_tensor
 
 ### TRAINING LOOP
-
 if __name__ == "__main__":
+
+    frames_dir = "\some_path/video_frames"
+    # NOTE: Arbitrary numbers right now
+    state_segments = [
+        (0, 40),   # State 0 covers frames [0..39]
+        (50, 90), # State 1 covers frames [50..89]
+        (100, 150) # State 2 covers frames [100..149]
+        ]   
+
+    dataset = StateSegmentDataset(frames_dir, state_segments, transform=ImageTransforms)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     temperature = 1.0
 
-    # Suppose you have a DataLoader yielding video sequences x: [B, T, C, H, W]
+    # Assuming a DataLoader yielding video sequences x: [B, T, C, H, W]
     for epoch in range(10):
         for x in dataloader:
             x = x.to(device)
