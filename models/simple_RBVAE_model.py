@@ -37,7 +37,6 @@ def binary_concrete_logits(logits, temperature=1.0, hard=False):
     y = torch.sigmoid((logits + noise) / temperature)
 
     if hard:
-        # Straight-through estimator
         y_hard = (y > 0.5).float()
         y = (y_hard - y).detach() + y
 
@@ -79,7 +78,7 @@ class ConvEncoder(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, 64, 4, 2, 1),
+            nn.Conv2d(in_channels, out_channels=64, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             nn.Conv2d(64, 128, 4, 2, 1),
             nn.ReLU(),
@@ -118,11 +117,11 @@ class ConvDecoder(nn.Module):
         return x_recon
 
 
-class EncoderRNN(nn.module):
+class EncoderRNN(nn.Module):
     # Should latent_dim == hidden_dim? 
     # Probably right? We just want to capture temporal dependencies so what's the point of expanding to more dimensions
     def __init__(self, latent_dim=32, hidden_dim=32, num_layers=1):
-        super.__init__()
+        super().__init__()
         self.lstm = nn.LSTM(latent_dim, hidden_dim, num_layers, batch_first=True)
 
     def forward(self, z_seq):
@@ -144,7 +143,7 @@ class DecoderRNN(nn.Module):
         # Decode by feeding h_seq into the decoder LSTM
         d_seq, (d_n, c_n) = self.lstm(h_seq)
         # d_seq: [B, T, latent_dim]
-        return d_seq
+        return d_seq, (d_n, c_n)
 
 
 class Seq2SeqBinaryVAE(nn.Module):

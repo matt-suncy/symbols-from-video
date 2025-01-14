@@ -1,6 +1,7 @@
 
 ### IMPORTS
 import os
+from pathlib import Path
 from PIL import Image
 import torch
 import torch.nn as nn
@@ -8,6 +9,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
+from simple_RBVAE_model import Seq2SeqBinaryVAE
 ###
 
 #### LOSS FUNCTIONS
@@ -30,9 +32,23 @@ def kl_binary(q_logits):
     kl = kl.sum(-1).sum(-1) # Sum over categories and latent dimensions 
     return kl.mean()
 
+def contrast_loss(x1, x2, label, margin: float = 1.0):
+    """
+    Computes Contrastive Loss. Requires an input label to determine difference
+    between classes.
+    """
+
+    dist = F.pairwise_distance(x1, x2)
+
+    loss = (1 - label) * torch.pow(dist, 2) \
+        + (label) * torch.pow(torch.clamp(margin - dist, min=0.0), 2)
+    loss = torch.mean(loss)
+
+    return loss
+
 # This is a CLASS
 ImageTransforms = T.Compose([
-    T.Resize((512, 512)),
+    T.Resize((64, 64)),
     T.ToTensor()
 ])
 
@@ -61,7 +77,7 @@ class StateSegmentDataset(Dataset):
         frames = []
         for frame_idx in range(start_idx, end_idx):
             # TODO: Change filename accordingly
-            filename = f"frame_{frame_idx:05d}.png"
+            filename = f"{frame_idx:010d}.jpg"
             path = os.path.join(self.frames_dir, filename)
             img = Image.open(path).convert('RGB')
             if self.transform:
@@ -79,13 +95,16 @@ class StateSegmentDataset(Dataset):
         - You might want a shape of [B, T, C, H, W] for the model input where B=1 here.
         - The model expects [B, T, C, H, W], so keep [T, C, H, W].
         - The DataLoader with batch_size > 1 will add the batch dimension.
+
+        although, I think the data is already in the shape of [B, T, C, H, W]? 
         '''
         return frames_tensor
 
 ### TRAINING LOOP
 if __name__ == "__main__":
 
-    frames_dir = "\some_path/video_frames"
+    frames_dir = Path(__file__).parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
+    print(str(frames_dir))
     # NOTE: Arbitrary numbers right now
     state_segments = [
         (0, 40),   # State 0 covers frames [0..39]
@@ -99,16 +118,29 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    # Reparam related values
+    num_global_iters = 0
+        
+    # Reminder: temperature is for Softmax
     temperature = 1.0
 
-    # Assuming a DataLoader yielding video sequences x: [B, T, C, H, W]
-    for epoch in range(10):
+    # Reminder: beta is coefficient for KL
+    beta = 0.1
+    num_epochs = 10
+
+    # DataLoader yields video sequences x: [B, T, C, H, W]
+    for epoch in range(num_epochs):
         for x in dataloader:
+            # [B, T, C, H, W]
             x = x.to(device)
+
             x_recon, logits = model(x, temperature=0.5, hard=False)
-            recon_loss_val = reconstruction_loss(x_recon, x)
+
+            recon_loss_val = recon_loss(x_recon, x)
             kl_loss_val = kl_binary(logits)
-            loss = recon_loss_val + 0.1 * kl_loss_val
+            
+            loss = recon_loss_val + beta * kl_loss_val
 
             optimizer.zero_grad()
             loss.backward()
