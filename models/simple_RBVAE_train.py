@@ -1,3 +1,8 @@
+'''
+Author: Matthew Sun
+Description: Implementing training script for a simple RB-VAE, 
+purpose is to figure out the details of the architecture
+'''
 
 ### IMPORTS
 import os
