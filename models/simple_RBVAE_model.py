@@ -14,7 +14,7 @@ import numpy as np
 ###
 
 # NOTE: I think eventually, BC is what we wanna use.
-def binary_concrete_logits(logits, temperature=1.0, hard=False):
+def binary_concrete_logits(logits, temperature=1.0, hard=False, eps=1e-10):
     """
     logits: [batch, latent_dim] 
        A single logit per latent variable representing p(z=1).
@@ -29,9 +29,9 @@ def binary_concrete_logits(logits, temperature=1.0, hard=False):
     """
 
     # Sample uniform noise
-    U = torch.rand_like(logits)
+    U = torch.rand(logits.shape).to(logits.device)
     # Convert uniform noise to logistic noise
-    noise = torch.log(U + 1e-20) - torch.log(1.0 - U + 1e-20)
+    noise = torch.log(U + eps) - torch.log(1.0 - U + eps)
 
     # Add noise to logits and scale by temperature
     y = torch.sigmoid((logits + noise) / temperature)
@@ -42,7 +42,7 @@ def binary_concrete_logits(logits, temperature=1.0, hard=False):
 
     return y
 
-def sample_gumbel(shape, eps=1e-20):
+def sample_gumbel(shape, eps=1e-10):
     U = torch.rand(shape)
     return -torch.log(-torch.log(U + eps) + eps)
 
@@ -86,13 +86,14 @@ class ConvEncoder(nn.Module):
             nn.ReLU(),
             nn.Flatten()
         )
-        self.fc = nn.Linear(256*8*8, latent_dim*2)  # for binary each latent_dim => 2 logits
+        # 1 logit per latent variable since we want num_categories = 2
+        self.fc = nn.Linear(256*8*8, latent_dim)
 
     def forward(self, x):
         # x: [B, C, H, W]
         h = self.conv(x)
-        logits = self.fc(h) # [B, latent_dim*2]
-        logits = logits.view(x.size(0), self.latent_dim, 2)
+        logits = self.fc(h) # [B, latent_dim]
+        logits = logits.view(x.size(0), self.latent_dim)
         return logits
 
 
@@ -162,11 +163,17 @@ class Seq2SeqBinaryVAE(nn.Module):
         # Feed through conv encoder
         x_reshaped = x.view(B*T, C, H, W)
         logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim, 2]
+        
+        '''
+        This is all Gumbel Softmax with 2 logits per latent variable:
 
         # Sample binary latent z (discretized form)
         z_sample = gumbel_softmax_logits(logits, temperature=temperature, hard=hard)
-        # Extract probability of class '1': [B*T, latent_dim]
+        # # Extract probability of class '1': [B*T, latent_dim]
         z = z_sample[..., 1]
+        '''
+
+        z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
 
         # Reshape z => [B, T, latent_dim]
         z_seq = z.view(B, T, self.latent_dim)   
