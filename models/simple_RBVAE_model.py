@@ -16,16 +16,17 @@ import numpy as np
 # NOTE: I think eventually, BC is what we wanna use.
 def binary_concrete_logits(logits, temperature=1.0, hard=False, eps=1e-10):
     """
+    Args:
     logits: [batch, latent_dim] 
-       A single logit per latent variable representing p(z=1).
+        A single logit per latent variable representing p(z=1).
     temperature: float 
-       Controls the 'smoothness' of the samples.
+        Controls the 'smoothness' of the samples.
     hard: bool 
         Controls whether samples are discretized or not
 
     Returns:
-       y: [batch, latent_dim]
-          Differentiable approximation using Gumbel-Softmax trick.
+    y: [batch, latent_dim]
+            Differentiable approximation using Gumbel-Softmax trick.
     """
 
     # Sample uniform noise

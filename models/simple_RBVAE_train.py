@@ -86,13 +86,16 @@ ImageTransforms = T.Compose([
 ])
 
 class StateSegmentDataset(Dataset):
+    """
+    Args:
+    frames_dir: str
+        Path to directory with frame PNGs.
+    state_segments: list of tuples 
+        Each tuple is (start_idx, end_idx) for that state.
+    transform: callable, optional 
+        Optional transform to be applied on a frame.
+    """
     def __init__(self, frames_dir, state_segments, transform=None):
-        """
-        Args:
-            frames_dir (str): Path to directory with frame PNGs.
-            state_segments (list of tuples): Each tuple is (start_idx, end_idx) for that state.
-            transform (callable, optional): Optional transform to be applied on a frame.
-        """
         self.frames_dir = frames_dir
         self.state_segments = state_segments
         self.transform = transform
