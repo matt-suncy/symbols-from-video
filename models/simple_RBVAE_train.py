@@ -38,17 +38,20 @@ def kl_binary_gumbel(q_logits, eps=1e-10):
         q = q_logits
 
     # KL(q||p) with p=uniform(0.5,0.5):
-    # NOTE: This will be changed to a Bernoulli distribution with a small value later
     kl = q * (torch.log(q + eps) - np.log(0.5))
     kl = kl.sum(-1).sum(-1) # Sum over categories and latent dimensions 
     return kl.mean()
 
 def kl_binary_concrete(q_logits, p=0.5, eps=1e-10):
+    '''
+    Calculates the KL Divergence between input logits and a 
+    Bernoulli distribution
+    '''
     # Squish it
     q = torch.sigmoid(q_logits)
 
     # KL( Bernoulli(q) || Bernoulli(p) ) = q * log(q/p) + (1-q) * log((1-q)/(1-p))
-    # Not adding eps for p because it should never that small
+    # Not adding eps for p because it should never be that small
     # q: tensor, p: float
     kl = q * (torch.log(q + eps) - np.log(p)) \
         + (1.0 - q) * (torch.log(1.0 - q + eps) - np.log(1.0 - p))
@@ -59,8 +62,8 @@ def kl_binary_concrete(q_logits, p=0.5, eps=1e-10):
     - We can sum over D and then take .mean() (average over batch B).
     '''
 
-    kl = kl.sum(dim=-1)   # sum over last dimension (latent_dim)
-    kl_mean = kl.mean()   # average over batch
+    kl = kl.sum(dim=-1)   # Sum over last dimension (latent_dim)
+    kl_mean = kl.mean()   # Average over batch
 
     return kl_mean
 
@@ -174,7 +177,7 @@ if __name__ == "__main__":
             x_recon, logits = model(x, temperature=0.5, hard=False)
 
             recon_loss_val = recon_loss(x_recon, x)
-            kl_loss_val = kl_binary_concrete(logits)
+            kl_loss_val = kl_binary_concrete(logits, p=0.1)
             
             loss = recon_loss_val + beta * kl_loss_val
 
