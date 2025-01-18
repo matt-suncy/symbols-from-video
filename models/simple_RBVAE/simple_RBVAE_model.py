@@ -163,10 +163,10 @@ class Seq2SeqBinaryVAE(nn.Module):
 
         # Feed through conv encoder
         x_reshaped = x.view(B*T, C, H, W)
-        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim, 2]
+        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
         
         '''
-        This is all Gumbel Softmax with 2 logits per latent variable:
+        The following is Gumbel Softmax with 2 logits per latent variable:
 
         # Sample binary latent z (discretized form)
         z_sample = gumbel_softmax_logits(logits, temperature=temperature, hard=hard)

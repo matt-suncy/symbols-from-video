@@ -155,7 +155,7 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
+    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     # Reparam related values
@@ -166,7 +166,7 @@ if __name__ == "__main__":
 
     # Reminder: beta is coefficient for KL
     beta = 0.1
-    num_epochs = 10
+    num_epochs = 15
 
     # DataLoader yields video sequences x: [B, T, C, H, W]
     for epoch in range(num_epochs):
