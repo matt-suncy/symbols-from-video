@@ -18,7 +18,7 @@ import numpy as np
 from simple_RBVAE_model import Seq2SeqBinaryVAE
 ###
 
-#### LOSS FUNCTIONS
+### LOSS FUNCTIONS ###
 
 # TODO: Try L1 reg  
 
@@ -75,6 +75,8 @@ ImageTransforms = T.Compose([
     T.Resize((64, 64)),
     T.ToTensor()
 ])
+
+### DATASETS ###
 
 class StateSegmentDataset(Dataset):
     """
@@ -199,9 +201,7 @@ class StatePairDataset(Dataset):
         return image
 
 
-        
-
-### TRAINING LOOP 
+### TRAINING LOOP ###
 
 def train_one_epoch(model, dataloader, optimizer, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
     """
@@ -322,7 +322,7 @@ if __name__ == "__main__":
         (100, 150) # State 2 covers frames [100..149]
         ]   
 
-    dataset = StateSegmentDataset(frames_dir, state_segments, transform=ImageTransforms)
+    dataset = StatePairDataset(frames_dir, state_segments, transform=ImageTransforms, num_items=500)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -337,7 +337,7 @@ if __name__ == "__main__":
 
     # Reminder: beta is coefficient for KL
     beta = 0.1
-    num_epochs = 15
+    num_epochs = 15 
 
     # DataLoader yields video sequences x: [B, T, C, H, W]
     for epoch in range(num_epochs):
