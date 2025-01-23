@@ -39,40 +39,9 @@ def binary_concrete_logits(logits, temperature=1.0, hard=False, eps=1e-10):
 
     if hard:
         y_hard = (y > 0.5).float()
-        y = (y_hard - y).detach() + y
-
-    return y
-
-def sample_gumbel(shape, eps=1e-10):
-    U = torch.rand(shape)
-    return -torch.log(-torch.log(U + eps) + eps)
-
-def gumbel_softmax_logits(logits, temperature=1.0, hard=False):
-    """
-    Params:
-        logits: [batch, categorical_dim]
-        temperature: float
-            Controls smoothness of outputs
-        hard: Boolean
-            Controls whether outputs are discretized or not
-
-    Returns: 
-        y: [batch, latent_dim, 2]
-           Differentiable samples approximating one-hot vectors.
-    """
-    gumbels = sample_gumbel(logits.shape).to(logits.device)
-    y = logits + gumbels
-    # TODO: Check during example training
-    y = F.softmax(y / temperature, dim=-1)
-
-    if hard:
-        # Discretized outputs
-        y_hard = (y == y.max(dim=-1, keepdim=True)[0]).float()
         y = (y_hard - y).detach() + y # detach() trick to not mess up gradients
-    return y
 
-# NOTE: These NN classes will be written for Gumbel Softmax 
-# meaning two logits for each latent dimension hence shape of (n, latent_dim, 2)
+    return y
 
 class ConvEncoder(nn.Module):
     def __init__(self, in_channels=3, latent_dim=32):
@@ -164,15 +133,6 @@ class Seq2SeqBinaryVAE(nn.Module):
         # Feed through conv encoder
         x_reshaped = x.view(B*T, C, H, W)
         logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
-        
-        '''
-        The following is Gumbel Softmax with 2 logits per latent variable:
-
-        # Sample binary latent z (discretized form)
-        z_sample = gumbel_softmax_logits(logits, temperature=temperature, hard=hard)
-        # # Extract probability of class '1': [B*T, latent_dim]
-        z = z_sample[..., 1]
-        '''
 
         z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
 
@@ -190,5 +150,5 @@ class Seq2SeqBinaryVAE(nn.Module):
         x_recon = self.decoder_cnn(d_seq_flat)
         x_recon = x_recon.view(B, T, C, H, W)
 
-        return x_recon, logits
+        return x_recon, z_seq, logits
 
