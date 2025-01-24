@@ -14,7 +14,7 @@ import numpy as np
 ###
 
 # NOTE: I think eventually, BC is what we wanna use.
-def binary_concrete_logits(logits, temperature=1.0, hard=False, eps=1e-10):
+def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-10):
     """
     Args:
     logits: [batch, latent_dim] 
@@ -151,4 +151,19 @@ class Seq2SeqBinaryVAE(nn.Module):
         x_recon = x_recon.view(B, T, C, H, W)
 
         return x_recon, z_seq, logits
+
+    def encode(self, x, temperature=0.5, hard=False):
+        # x: [B, T, C, H, W]
+        B, T, C, H, W = x.size()
+
+        # Feed through conv encoder
+        x_reshaped = x.view(B*T, C, H, W)
+        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
+
+        z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
+
+        # Reshape z => [B, T, latent_dim]
+        z_seq = z.view(B, T, self.latent_dim)
+        
+        return z_seq
 
