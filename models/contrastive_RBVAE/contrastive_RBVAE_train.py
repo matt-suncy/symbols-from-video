@@ -27,6 +27,7 @@ def l1_loss(q_logits, lamb):
     # Also I have no idea if q_logits needs to be reshaped or something
     return lamb * torch.norm(q_logits, p=1)
 
+
 def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
@@ -203,7 +204,7 @@ class StatePairDataset(Dataset):
 
 ### TRAINING LOOP ###
 
-def train_one_epoch(model, dataloader, optimizer, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
+def train_one_epoch(model, dataloader, optimizer, temperature=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
     """
     --- Args ---
     model: NN Class
@@ -212,6 +213,8 @@ def train_one_epoch(model, dataloader, optimizer, margin=1.0, alpha_contrast=0.1
         Yields sequences from each state segment.
     optimizer: Optimizer Class
         Any PyTorch optimizer.
+    temperature: float
+        Determines the "smoothness" of the samples.
     margin: float
         Determines the threshold for dissimilarity .
     alpha_contrast: float
@@ -220,81 +223,56 @@ def train_one_epoch(model, dataloader, optimizer, margin=1.0, alpha_contrast=0.1
         Coefficient for weighting of KL Divergence loss.
 
     --- Returns ---
-    mean_loss: float
-        total_loss divided by the number of states.
+    total_loss: float
+        Loss value divided by the number of states.
+    recon_loss: float
+        The average reconstruction loss value.
+    kl_loss: float
+        The average KL divergence loss value.
+    contrast_loss: float
+        The average contrastive loss value. 
     """
     model.train()
     total_loss = 0.0
     total_recon_loss = 0.0
     total_kl_loss = 0.0
     total_contrast_loss = 0.0
-    for frames_seq in dataloader:
-        # frames_seq: [B, T, C, H, W], often B=1 if each segment is an item
-        frames_seq = frames_seq.cuda()
+    for item in dataloader:
+        # item shape: [B, 2, T, C, H, W]
+        item = item.to(model.device)
+        # Separate the pairs of frames into tensors with shape [B, 1, T, C, H, W]
+        frame_1 = item[:, 0]
+        frame_2 = item[:, 1]
 
         # Forward pass
-        # Suppose your model is modified to return z_seq as well:
-        # x_recon: [B, T, C, H, W]
-        # z_seq:   [B, T, latent_dim]
-        # logits:  [B*T, latent_dim, 2] or [B, T, latent_dim] (depends on your approach)
-        x_recon, z_seq, logits = model(frames_seq, return_latents=True)
-        
-        # Standard VAE losses
-        recon_loss_val = reconstruction_loss(x_recon, frames_seq)
-        kl_loss_val = kl_binary(logits)
+        x_recon_1, z_seq_1, logits_1 = model(frame_1, temperature=0.5, hard=False)
+        x_recon_2, z_seq_2, logits_2 = model(frame_2, temperature=0.5, hard=False)
 
-        # ---------------------------------------------------------
-        # 1) Sample pairs for contrastive loss
-        #    Let's do a simple example with B=1 for clarity:
-        #    frames_seq => shape = [1, T, C, H, W]
-        #    z_seq => shape = [1, T, latent_dim]
-        # We will pick:
-        #   - two frames i,j from the same state => positive pair
-        #   - two frames k,l from a different state => negative pair
-        # For demonstration, let's assume we have T frames all from the SAME state
-        # and T frames from the NEXT state in the next iteration or some other approach.
+        # Reconstruction loss
+        recon_loss_1 = recon_loss(x_recon_1, frame_1)
+        recon_loss_2 = recon_loss(x_recon_2, frame_2)
+        recon_loss_val = (recon_loss_1 + recon_loss_2) / 2.0
 
-        # If your dataset item has multiple states, you can separate them by index.
-        # Or if each dataset item is exactly one state, you can store it with the
-        # next state in the same batch. Many ways to do it.
+        # KL loss
+        kl_loss_1 = kl_binary_concrete(logits_1)
+        kl_loss_2 = kl_binary_concrete(logits_2)
 
-        # Let's suppose we have T frames from the SAME state. We'll do "positive pairs"
-        # from this state. We'll also pretend we have T frames from the NEXT state
-        # in the same batch => shape [2, T, ...]. Then we can do negative pairs
-        # across the batch dimension. This is just an example.
+        # Contrastive loss
+        contrast_loss_similar = contrast_loss(z_seq_1, z_seq_2, label=0)
+        contrast_loss_dissim = 0
+        # Calculate the dissimilar contrastive loss over the states,
+        # just for one of the two sequences
+        for state_index in range(int(item.shape[2]) - 1):
+            # Get latent sequences of shape [B, latent_dim] 
+            # Latent seq at state_index
+            dissim_z_a = z_seq_1[:, state_index]
+            # Latent seq at state_index + 1
+            dissim_z_b = z_seq_1[:, state_index+1]
+            contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
+        contrast_loss_dissim = contrast_loss_dissim / float(int(item.shape[2]) - 1)
+        contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
 
-        if frames_seq.size(0) == 2:
-            # B=2 => we have two states (or two segments), each with T frames
-            z_seq_0 = z_seq[0]  # shape [T, latent_dim]
-            z_seq_1 = z_seq[1]  # shape [T, latent_dim]
-
-            # Positive pair: pick random frames i, j from the same state (batch 0)
-            T0 = z_seq_0.size(0)
-            i, j = np.random.choice(T0, size=2, replace=False)
-            z_i = z_seq_0[i].unsqueeze(0)  # [1, latent_dim]
-            z_j = z_seq_0[j].unsqueeze(0)  # [1, latent_dim]
-
-            # Negative pair: pick one frame from batch 0, one from batch 1
-            k = np.random.randint(0, T0)
-            T1 = z_seq_1.size(0)
-            l = np.random.randint(0, T1)
-            z_k = z_seq_0[k].unsqueeze(0)  # [1, latent_dim]
-            z_l = z_seq_1[l].unsqueeze(0)  # [1, latent_dim]
-
-            # Build label Tensors
-            y_pos = torch.ones(1, device=z_i.device)  # same state
-            y_neg = torch.zeros(1, device=z_i.device) # different state
-
-            # Compute contrastive losses
-            loss_pos = contrastive_loss(z_i, z_j, y_pos, margin=margin)
-            loss_neg = contrastive_loss(z_k, z_l, y_neg, margin=margin)
-            contrast_loss_val = loss_pos + loss_neg
-
-        else:
-            # If B=1 or something else, you might skip or do another strategy
-            contrast_loss_val = 0.0
-
-        # 2) Combine VAE losses + contrastive loss
+        # Combine VAE losses and contrastive loss
         loss = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
         
         # Backprop
@@ -313,7 +291,7 @@ def train_one_epoch(model, dataloader, optimizer, margin=1.0, alpha_contrast=0.1
 
 if __name__ == "__main__":
 
-    frames_dir = Path(__file__).parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
+    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
     print(str(frames_dir))
     # NOTE: Arbitrary numbers right now
     state_segments = [
@@ -329,31 +307,24 @@ if __name__ == "__main__":
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    # Reparam related values
-    num_global_iters = 0
+    
         
-    # Reminder: temperature is for Softmax
+    # temperature is for Softmax
     temperature = 1.0
 
-    # Reminder: beta is coefficient for KL
+    # beta is coefficient for KL
     beta = 0.1
     num_epochs = 15 
 
+    # Categorical reparameterization related values
+    num_global_iters = 0
+    max_iters = num_epochs * len(dataset)
+
     # DataLoader yields video sequences x: [B, T, C, H, W]
     for epoch in range(num_epochs):
-        for x in dataloader:
-            # [B, T, C, H, W]
-            x = x.to(device)
+        
+        total_loss, recon_loss, kl_loss, contrast_loss = \
+            train_one_epoch(model, dataloader, optimizer, temperature=temperature) 
 
-            x_recon, logits = model(x, temperature=0.5, hard=False)
-
-            recon_loss_val = recon_loss(x_recon, x)
-            kl_loss_val = kl_binary_concrete(logits, p=0.1)
-            
-            loss = recon_loss_val + beta * kl_loss_val
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        print(f"Epoch {epoch} - Loss: {loss.item()} Reconstruction: {recon_loss_val.item()} KL: {kl_loss_val.item()}")
+        print(f"Epoch {epoch} - Loss: {total_loss} Reconstruction: {recon_loss} \
+            KL: {kl_loss} Contrastive: {contrast_loss}")
