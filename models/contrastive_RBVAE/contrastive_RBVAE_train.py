@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
-from simple_RBVAE_model import Seq2SeqBinaryVAE
+from contrastive_RBVAE_model import Seq2SeqBinaryVAE
 ###
 
 ### LOSS FUNCTIONS ###
@@ -42,7 +42,7 @@ def kl_binary_concrete(q_logits, p=0.5, eps=1e-10):
 
     # KL( Bernoulli(q) || Bernoulli(p) ) = q * log(q/p) + (1-q) * log((1-q)/(1-p))
     # Not adding eps for p because it should never be that small
-    # q: tensor, p: float
+    # BTW q: tensor, p: float hence why we use np.log() for p
     kl = q * (torch.log(q + eps) - np.log(p)) \
         + (1.0 - q) * (torch.log(1.0 - q + eps) - np.log(1.0 - p))
 
@@ -152,7 +152,7 @@ class StatePairDataset(Dataset):
         self.num_states = len(self.state_segments)
 
         # Creates list of indices explicitly written out so we can sample
-        self.state_frame_indices
+        self.state_frame_indices = []
         for (start, end) in self.state_segments:
             frame_indices = list(range(start, end))
             self.state_frame_indices.append(frame_indices)
@@ -175,7 +175,7 @@ class StatePairDataset(Dataset):
                 index1 = index2 = 0
             else:
                 # Randomly choose 2 distinct states from the current state
-                idx1, idx1 = random.sample(frame_indices, 2)
+                index1, index2 = random.sample(frame_indices, 2)
 
             # Load and apply transform
             frame1 = self._load_frame(index1)
@@ -188,8 +188,8 @@ class StatePairDataset(Dataset):
 
         pairs_tensor = pairs_tensor.permute(1, 0, 2, 3, 4) # [2, T, C, H, W]
         '''
-        NOTE: Honestly no particular reason to have the pair dimension first.
-        A shape of [2, T, C, H, W] just feels right for me.
+        NOTE: Honestly, there's no particular reason to have the pair dimension first.
+        A shape of [2, T, C, H, W] just feels right to me.
         '''
         return pairs_tensor
 
@@ -204,11 +204,13 @@ class StatePairDataset(Dataset):
 
 ### TRAINING LOOP ###
 
-def train_one_epoch(model, dataloader, optimizer, temperature=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
+def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, bernoulli_p=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
     """
     --- Args ---
     model: NN Class
         Seq2SeqBinaryVAE (or similar) neural net class.
+    device: PyTorch device
+        A PyTorch object determining what device the data is on.
     dataloader: Dataloader Class
         Yields sequences from each state segment.
     optimizer: Optimizer Class
@@ -239,14 +241,14 @@ def train_one_epoch(model, dataloader, optimizer, temperature=0.5, margin=1.0, a
     total_contrast_loss = 0.0
     for item in dataloader:
         # item shape: [B, 2, T, C, H, W]
-        item = item.to(model.device)
+        item = item.to(device)
         # Separate the pairs of frames into tensors with shape [B, 1, T, C, H, W]
         frame_1 = item[:, 0]
         frame_2 = item[:, 1]
 
         # Forward pass
-        x_recon_1, z_seq_1, logits_1 = model(frame_1, temperature=0.5, hard=False)
-        x_recon_2, z_seq_2, logits_2 = model(frame_2, temperature=0.5, hard=False)
+        x_recon_1, z_seq_1, logits_1 = model(frame_1, temperature=temperature, hard=False)
+        x_recon_2, z_seq_2, logits_2 = model(frame_2, temperature=temperature, hard=False)
 
         # Reconstruction loss
         recon_loss_1 = recon_loss(x_recon_1, frame_1)
@@ -254,8 +256,9 @@ def train_one_epoch(model, dataloader, optimizer, temperature=0.5, margin=1.0, a
         recon_loss_val = (recon_loss_1 + recon_loss_2) / 2.0
 
         # KL loss
-        kl_loss_1 = kl_binary_concrete(logits_1)
-        kl_loss_2 = kl_binary_concrete(logits_2)
+        kl_loss_1 = kl_binary_concrete(logits_1, p=bernoulli_p)
+        kl_loss_2 = kl_binary_concrete(logits_2, p=bernoulli_p)
+        kl_loss_val = (kl_loss_1 + kl_loss_2) / 2.0
 
         # Contrastive loss
         contrast_loss_similar = contrast_loss(z_seq_1, z_seq_2, label=0)
@@ -307,14 +310,16 @@ if __name__ == "__main__":
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    
+    num_epochs = 1
         
     # temperature is for Softmax
-    temperature = 1.0
+    temperature = 0.5
 
     # beta is coefficient for KL
     beta = 0.1
-    num_epochs = 15 
+
+    # alpha is coefficient for contrastive loss
+    alpha = 0.1
 
     # Categorical reparameterization related values
     num_global_iters = 0
@@ -323,8 +328,9 @@ if __name__ == "__main__":
     # DataLoader yields video sequences x: [B, T, C, H, W]
     for epoch in range(num_epochs):
         
-        total_loss, recon_loss, kl_loss, contrast_loss = \
-            train_one_epoch(model, dataloader, optimizer, temperature=temperature) 
+        total_loss_val, recon_loss_val, kl_loss_val, contrast_loss_val = \
+            train_one_epoch(model, device, dataloader, optimizer, temperature=temperature, 
+            alpha_contrast=alpha, beta_kl=beta, bernoulli_p=0.1) 
 
-        print(f"Epoch {epoch} - Loss: {total_loss} Reconstruction: {recon_loss} \
-            KL: {kl_loss} Contrastive: {contrast_loss}")
+        print(f"Epoch {epoch+1} --- Loss: {total_loss_val} Reconstruction: {recon_loss_val} \
+            KL: {kl_loss_val} Contrastive: {contrast_loss_val}")
