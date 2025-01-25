@@ -129,6 +129,7 @@ class Seq2SeqBinaryVAE(nn.Module):
         self.decoder_rnn = DecoderRNN(hidden_dim=hidden_dim, latent_dim=latent_dim)
 
     def forward(self, x, temperature=1.0, hard=False):
+        # The pair dimension isn't here since we're feeding one by one
         # x: [B, T, C, H, W]
         B, T, C, H, W = x.size()
 

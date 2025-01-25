@@ -218,7 +218,7 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
     temperature: float
         Determines the "smoothness" of the samples.
     margin: float
-        Determines the threshold for dissimilarity .
+        Determines the threshold for dissimilarity.
     alpha_contrast: float
         Coefficient for weighting of contrastive loss.
     beta_kl: float
