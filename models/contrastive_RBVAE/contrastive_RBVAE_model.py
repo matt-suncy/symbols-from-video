@@ -27,7 +27,7 @@ def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-10):
 
     Returns:
     y: [batch, latent_dim]
-            Differentiable approximation using Gumbel-Softmax trick.
+        Differentiable approximation using Gumbel-Softmax trick.
     """
 
     # Sample uniform noise
