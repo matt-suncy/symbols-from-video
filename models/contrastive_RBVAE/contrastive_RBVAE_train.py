@@ -174,7 +174,7 @@ class StatePairDataset(Dataset):
             if len(frame_indices) == 1:
                 index1 = index2 = 0
             else:
-                # Randomly choose 2 distinct states from the current state
+                # Randomly choose 2 distinct frames from the current state
                 index1, index2 = random.sample(frame_indices, 2)
 
             # Load and apply transform
