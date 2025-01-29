@@ -2,6 +2,8 @@
 Author: Matthew Sun
 Description: Implementing training script for a simple RB-VAE, 
 purpose is to figure out the details of the architecture
+
+# NOTE: MARKED FOR REVIEW
 '''
 
 ### IMPORTS
@@ -106,7 +108,6 @@ class StateSegmentDataset(Dataset):
 
         frames = []
         for frame_idx in range(start_idx, end_idx):
-            # TODO: Change filename accordingly
             filename = f"{frame_idx:010d}.jpg"
             path = os.path.join(self.frames_dir, filename)
             img = Image.open(path).convert('RGB')
@@ -120,7 +121,6 @@ class StateSegmentDataset(Dataset):
         frames_tensor = torch.stack(frames, dim=0)
 
         '''
-        TODO
         Suggestions from GPT-o1:
         - You might want a shape of [B, T, C, H, W] for the model input where B=1 here.
         - The model expects [B, T, C, H, W], so keep [T, C, H, W].
@@ -174,7 +174,7 @@ class StatePairDataset(Dataset):
             if len(frame_indices) == 1:
                 index1 = index2 = 0
             else:
-                # Randomly choose 2 distinct states from the current state
+                # Randomly choose 2 distinct frames from the current state
                 index1, index2 = random.sample(frame_indices, 2)
 
             # Load and apply transform
@@ -218,7 +218,7 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
     temperature: float
         Determines the "smoothness" of the samples.
     margin: float
-        Determines the threshold for dissimilarity .
+        Determines the threshold for dissimilarity.
     alpha_contrast: float
         Coefficient for weighting of contrastive loss.
     beta_kl: float
@@ -321,16 +321,20 @@ if __name__ == "__main__":
     # alpha is coefficient for contrastive loss
     alpha = 0.1
 
+    # p is the success prob parameter for the Bernoulli distribution
+    p = 0.1
+
+    # TODO: Add temperature annealing schedule for reparameterization
     # Categorical reparameterization related values
     num_global_iters = 0
     max_iters = num_epochs * len(dataset)
 
-    # DataLoader yields video sequences x: [B, T, C, H, W]
+    # DataLoader yields video sequences x: [B, 2, T, C, H, W]
     for epoch in range(num_epochs):
         
         total_loss_val, recon_loss_val, kl_loss_val, contrast_loss_val = \
             train_one_epoch(model, device, dataloader, optimizer, temperature=temperature, 
-            alpha_contrast=alpha, beta_kl=beta, bernoulli_p=0.1) 
+            alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p) 
 
         print(f"Epoch {epoch+1} --- Loss: {total_loss_val} Reconstruction: {recon_loss_val} \
             KL: {kl_loss_val} Contrastive: {contrast_loss_val}")

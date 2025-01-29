@@ -2,6 +2,8 @@
 Author: Matthew Sun
 Description: Implementing a simple version of a Recurrent Binary Variational Autoencoder, 
 purpose is to figure out the details of the architecture
+
+# NOTE: MARKED FOR REVIEW
 '''
 
 ### IMPORTS
@@ -13,7 +15,6 @@ import torchvision.transforms as T
 import numpy as np
 ###
 
-# NOTE: I think eventually, BC is what we wanna use.
 def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-10):
     """
     Args:
@@ -26,7 +27,7 @@ def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-10):
 
     Returns:
     y: [batch, latent_dim]
-            Differentiable approximation using Gumbel-Softmax trick.
+        Differentiable approximation using Gumbel-Softmax trick.
     """
 
     # Sample uniform noise
@@ -90,7 +91,8 @@ class ConvDecoder(nn.Module):
 
 class EncoderRNN(nn.Module):
     # Should latent_dim == hidden_dim? 
-    # Probably right? We just want to capture temporal dependencies so what's the point of expanding to more dimensions
+    # Probably right? We just want to capture temporal dependencies so 
+    # what's the point of making the hidden dim different
     def __init__(self, latent_dim=32, hidden_dim=32, num_layers=1):
         super().__init__()
         self.lstm = nn.LSTM(latent_dim, hidden_dim, num_layers, batch_first=True)
@@ -127,6 +129,7 @@ class Seq2SeqBinaryVAE(nn.Module):
         self.decoder_rnn = DecoderRNN(hidden_dim=hidden_dim, latent_dim=latent_dim)
 
     def forward(self, x, temperature=1.0, hard=False):
+        # The pair dimension isn't here since we're feeding one by one
         # x: [B, T, C, H, W]
         B, T, C, H, W = x.size()
 
@@ -150,7 +153,7 @@ class Seq2SeqBinaryVAE(nn.Module):
         x_recon = self.decoder_cnn(d_seq_flat)
         x_recon = x_recon.view(B, T, C, H, W)
 
-        return x_recon, z_seq, logits
+        return x_recon, z_seq, logits # All of these are needed for backprop
 
     def encode(self, x, temperature=0.5, hard=False):
         # x: [B, T, C, H, W]
