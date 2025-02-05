@@ -142,7 +142,7 @@ class StateSegmentDataset(Dataset):
 ### TRAINING LOOP
 if __name__ == "__main__":
 
-    frames_dir = Path(__file__).parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
+    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
     print(str(frames_dir))
     # NOTE: Arbitrary numbers right now
     state_segments = [
