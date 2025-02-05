@@ -397,12 +397,20 @@ if __name__ == "__main__":
 
     frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
     print(str(frames_dir))
-    # NOTE: Arbitrary numbers right now
-    state_segments = [
-        (0, 40),   # State 0 covers frames [0..39]
-        (50, 90), # State 1 covers frames [50..89]
-        (100, 160) # State 2 covers frames [100..159]
-        ]   
+    # NOTE: These number are for "kid playing with blocks"
+    # Logic for creating state segments which are lists of tuples
+    last_frame = 1425
+    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
+    grey_out = 25
+    state_segments = []
+    for i in range(len(flags)):
+        if i > 0:
+            state_segments.append((flags[i-1]+grey_out, flags[i]-grey_out+1))
+        elif i == len(flags)-1:
+            state_segments.append((flags[i]+grey_out, last_frame+1))
+        else:
+            state_segments.append((0, flags[0]-grey_out+1))
+        
 
     dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
