@@ -22,7 +22,7 @@ from contrastive_RBVAE_model import Seq2SeqBinaryVAE
 
 ### LOSS FUNCTIONS ###
 
-# TODO: Try L1 reg  
+# TODO: Try L1 reg
 
 def l1_loss(q_logits, lamb):
     # This should only be used if there is only 1 logit per latent variable
@@ -130,8 +130,8 @@ class StateSegmentDataset(Dataset):
         '''
         return frames_tensor
 
-
-class StatePairDataset(Dataset):
+# TODO: Change to shuffle --> pair up contiguous frames
+class SampleStatePairDataset(Dataset):
     '''
     --- Args ---
     frames_dir: str
@@ -156,6 +156,9 @@ class StatePairDataset(Dataset):
         for (start, end) in self.state_segments:
             frame_indices = list(range(start, end))
             self.state_frame_indices.append(frame_indices)
+
+        # Get number of frames in the longest state
+        self.max_length = max([len(indices) for indices in self.state_segments])
 
     def __len__(self):
         return self.num_items
@@ -191,7 +194,6 @@ class StatePairDataset(Dataset):
         NOTE: Honestly, there's no particular reason to have the pair dimension first.
         A shape of [2, T, C, H, W] just feels right to me.
         '''
-        return pairs_tensor
 
     def _load_frame(self, frame_index):
         filename = f"{frame_index:010d}.jpg"
@@ -201,6 +203,100 @@ class StatePairDataset(Dataset):
             image = self.transform(image)
         return image
 
+class ShuffledStatePairDataset(Dataset):
+    '''
+    --- Args ---
+    frames_dir: str
+        Path to the directory containing the frames.
+    state_segments: list of tuples
+        List of tuples (start_idx, end_idx) determining state groupings.
+    transform: callable, optional
+        Transform to be applied each frame.
+    num_items: int
+        Number of items that this Dataset will yield.
+        Each item has shape [2, T, C, H, W]
+    '''
+    def __init__(self, frames_dir, state_segments, transform=None):
+        self.frames_dir = frames_dir
+        self.state_segments = state_segments
+        self.transform = transform
+        self.num_states = len(self.state_segments)
+
+        # Creates list of indices explicitly written out so we can sample
+        self.state_frame_indices = []
+        for (start, end) in self.state_segments:
+            frame_indices = list(range(start, end))
+            self.state_frame_indices.append(frame_indices)
+
+        # Build a list of frame indices for each state and compute max length.
+        self.state_frame_indices = []
+        self.max_frames = 0
+        for (start, end) in self.state_segments:
+            frame_indices = list(range(start, end))
+            self.state_frame_indices.append(frame_indices)
+            self.max_frames = max(self.max_frames, len(frame_indices))
+
+        # Pre-compute cause I don't want to shuffle every time getitem() gets called
+        self.state_pairs = []
+        for indices in self.state_frame_indices:
+            # Pad if necessary
+            if len(indices) < self.max_frames:
+                padded = indices.copy() + random.choices(indices, k=self.max_frames - len(indices))
+            else:
+                padded = indices.copy()
+
+            # Shuffle the padded indices once
+            random.shuffle(padded)
+
+            # Form contiguous pairs.
+            pairs = []
+            for i in range(len(padded) // 2):
+                pairs.append((padded[2 * i], padded[2 * i + 1]))
+
+            # Handle odd element.
+            if len(padded) % 2 == 1:
+                leftover = padded[-1]
+                candidate = random.choice([x for x in indices if x != leftover]) if len(indices) > 1 else leftover
+                pairs.append((leftover, candidate))
+
+            self.state_pairs.append(pairs)
+
+        self.num_items = self.max_frames // 2 if (self.max_frames % 2 == 0) \
+            else (self.max_frames + 1) // 2
+
+    def __len__(self):
+        return self.num_items
+
+    def __getitem__(self, idx):
+        '''
+        Outputs a tensor of shape [2, T, C, H, W],
+        where T is the number of states and 2 is the pair dimension.
+        '''
+        pairs = []
+        # For each state, select a pair based on the pre-computed pairs.
+        for state_idx, pairs_list in enumerate(self.state_pairs):
+            pair_idx = idx % len(pairs_list)
+            pair = pairs_list[pair_idx]
+
+            frame1 = self._load_frame(pair[0])
+            frame2 = self._load_frame(pair[1])
+            pairs.append(torch.stack([frame1, frame2], dim=0))  # [2, C, H, W]
+
+        # Arrange to output shape [2, T, C, H, W]
+        pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)
+        return pairs_tensor
+        '''
+        NOTE: Honestly, there's no particular reason to have the pair dimension first.
+        A shape of [2, T, C, H, W] just feels right to me.
+        '''
+
+    def _load_frame(self, frame_index):
+        filename = f"{frame_index:010d}.jpg"
+        path = os.path.join(self.frames_dir, filename)
+        image = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            image = self.transform(image)
+        return image
 
 ### TRAINING LOOP ###
 
@@ -242,7 +338,9 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
     for item in dataloader:
         # item shape: [B, 2, T, C, H, W]
         item = item.to(device)
+        # TODO: TensorBoard and/or multiply out the pair dimension during the forward pass
         # Separate the pairs of frames into tensors with shape [B, 1, T, C, H, W]
+        # TODO: make a separate function to avoid duplicate lines
         frame_1 = item[:, 0]
         frame_2 = item[:, 1]
 
@@ -265,6 +363,7 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
         contrast_loss_dissim = 0
         # Calculate the dissimilar contrastive loss over the states,
         # just for one of the two sequences
+        # TODO: shuffle the state indices 
         for state_index in range(int(item.shape[2]) - 1):
             # Get latent sequences of shape [B, latent_dim] 
             # Latent seq at state_index
@@ -272,6 +371,8 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
             # Latent seq at state_index + 1
             dissim_z_b = z_seq_1[:, state_index+1]
             contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
+        # TODO: How to keep embeddings from neighboring states closer? Maybe L1 or Hamming dist.
+
         contrast_loss_dissim = contrast_loss_dissim / float(int(item.shape[2]) - 1)
         contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
 
@@ -300,10 +401,10 @@ if __name__ == "__main__":
     state_segments = [
         (0, 40),   # State 0 covers frames [0..39]
         (50, 90), # State 1 covers frames [50..89]
-        (100, 150) # State 2 covers frames [100..149]
+        (100, 160) # State 2 covers frames [100..159]
         ]   
 
-    dataset = StatePairDataset(frames_dir, state_segments, transform=ImageTransforms, num_items=500)
+    dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
