@@ -2,8 +2,20 @@
 Performs linear regression between any number of independent and 
 any number of dependent variables
 """
-
+import os
+from pathlib import Path
+from PIL import Image
+import random
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+import torchvision.transforms as T
 import numpy as np
+
+from models.contrastive_RBVAE.contr astive_RBVAE_model import Seq2SeqBinaryVAE
+
+
 from sklearn.datasets import make_regression  # For generating synthetic data
 from sklearn.linear_model import LinearRegression  # Linear regression model
 from sklearn.model_selection import train_test_split  # For splitting data
@@ -32,6 +44,14 @@ def main():
         noise=0.1,         # Adding a little noise
         random_state=42    # Ensures reproducibility
     )
+
+    # Load model
+    model_path = Path(__file__).parent.joinpath("saved_RBVAE")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = TheModelClass(*args, **kwargs)
+    model.load_state_dict(torch.load(model_path, weights_only=True))
+    model.to(device)
+    # Make sure to call input = input.to(device) on any input tensors that you feed to the model
 
     # Split the dataset into training (80%) and testing (20%) sets.
     X_train, X_test, y_train, y_test = train_test_split(
