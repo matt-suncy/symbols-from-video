@@ -419,7 +419,7 @@ if __name__ == "__main__":
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    num_epochs = 1
+    num_epochs = 10
         
     # temperature is for Softmax
     temperature = 0.5
@@ -447,3 +447,8 @@ if __name__ == "__main__":
 
         print(f"Epoch {epoch+1} --- Loss: {total_loss_val} Reconstruction: {recon_loss_val} \
             KL: {kl_loss_val} Contrastive: {contrast_loss_val}")
+
+    # Saving the model
+    save_path = Path(__file__).parent.joinpath("saved_RBVAE")
+    stop = True
+    torch.save(model.state_dict(), save_path)
