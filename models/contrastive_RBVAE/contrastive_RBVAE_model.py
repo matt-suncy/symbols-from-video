@@ -120,6 +120,15 @@ class DecoderRNN(nn.Module):
 
 
 class Seq2SeqBinaryVAE(nn.Module):
+    '''
+    --- Returns ---
+    x_recon: tensor
+        Reconstructed inputs
+    z_seq: tensor
+        Hidden sequence of latent variables
+    logits: tensor
+        Logits of convolutional encoders before Binary Concrete
+    '''
     def __init__(self, in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32):
         super().__init__()
         self.latent_dim = latent_dim
