@@ -2,6 +2,7 @@
 Performs linear regression between any number of independent and 
 any number of dependent variables
 """
+import sys
 import os
 from pathlib import Path
 from PIL import Image
@@ -13,9 +14,6 @@ from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
 
-from models.contrastive_RBVAE.contr astive_RBVAE_model import Seq2SeqBinaryVAE
-
-
 from sklearn.datasets import make_regression  # For generating synthetic data
 from sklearn.linear_model import LinearRegression  # Linear regression model
 from sklearn.model_selection import train_test_split  # For splitting data
@@ -25,6 +23,27 @@ from sklearn.metrics import (
     mean_absolute_error,
     explained_variance_score,
 )
+# Get the absolute path to the project root
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+sys.path.insert(0, project_root)
+from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
+
+ImageTransforms = T.Compose([T.ToTensor()])
+
+def load_frames(frames_dir, frame_indices: tuple, transform=None):
+    '''
+    Loads frames into a list given the path to the frames and indices.
+    '''
+    images = []
+    for frame_index in range(frame_indices[0], frame_indices[1]):
+        filename = f"{frame_index:010d}.jpg"
+        path = os.path.join(frames_dir, filename)
+        image = Image.open(path).convert("RGB")
+        if transform is not None:
+            image = transform(image)
+        images.append(image)
+
+    return images
 
 def main():
     # Set a random seed for reproducibility
@@ -46,12 +65,26 @@ def main():
     )
 
     # Load model
-    model_path = Path(__file__).parent.joinpath("saved_RBVAE")
+    model_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "models/contrastive_RBVAE/saved_RBVAE"
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TheModelClass(*args, **kwargs)
-    model.load_state_dict(torch.load(model_path, weights_only=True))
-    model.to(device)
+    rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16)
+    rbvae_model.load_state_dict(torch.load(model_path, weights_only=True))
+    rbvae_model.to(device)
     # Make sure to call input = input.to(device) on any input tensors that you feed to the model
+
+    frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/frames/kid_playing_with_blocks_1.mp4"
+        )
+    frame_indices = (0, 128)
+
+    frames = load_frames(frames_dir, frame_indices, transform=ImageTransforms) # each element is a PIL
+
+    # Flatten out frame tensors
+    frames = [torch.flatten(f) for f in frames]
+
+    # TODO get the embeddings and do the regression
 
     # Split the dataset into training (80%) and testing (20%) sets.
     X_train, X_test, y_train, y_test = train_test_split(
@@ -70,7 +103,7 @@ def main():
     # Calculate regression metrics:
 
     # R-squared Score: Indicates how well the model explains the variability of the data.
-    # For multi-output regression, 'uniform_average' computes the average R² over all targets.
+    # For multi-output regression, 'uniform_average' computes the average R^2 over all targets.
     r2 = r2_score(y_test, y_pred, multioutput='uniform_average')
 
     # Mean Squared Error (MSE): The average squared difference between the actual and predicted values.
