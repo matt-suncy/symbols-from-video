@@ -28,7 +28,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..
 sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
 
-ImageTransforms = T.Compose([T.ToTensor()])
+# This is a CALLABLE
+ImageTransforms = T.Compose([
+    T.Resize((64, 64)),
+    T.ToTensor()
+])
 
 def load_frames(frames_dir, frame_indices: tuple, transform=None):
     '''
@@ -72,6 +76,7 @@ def main():
     rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16)
     rbvae_model.load_state_dict(torch.load(model_path, weights_only=True))
     rbvae_model.to(device)
+    rbvae_model.eval()
     # Make sure to call input = input.to(device) on any input tensors that you feed to the model
 
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
@@ -81,24 +86,35 @@ def main():
 
     frames = load_frames(frames_dir, frame_indices, transform=ImageTransforms) # each element is a PIL
 
-    # Flatten out frame tensors
-    frames = [torch.flatten(f) for f in frames]
-
     # TODO get the embeddings and do the regression
 
+    embeddings = []
+    for i in range(len(frames)):
+        # Give frames so that shape is [1, 1, 3, 64, 64]
+        frame_expanded = frames[i][None, None, :, :, :].to(device)
+        _, z_seq, _ = rbvae_model(frame_expanded, temperature=0.5)
+        embeddings.append(torch.squeeze(z_seq))
+    embeddings = torch.stack(embeddings, dim=0).to('cpu')
+
+    # Flatten out frame tensors
+    frames = torch.stack([torch.flatten(f) for f in frames], dim=0).to('cpu')
+
     # Split the dataset into training (80%) and testing (20%) sets.
+    # FOR NOW, these train-test splits don't really mean anything because 
+    # im not holding anything out.
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        embeddings, frames, test_size=0.2, random_state=42
     )
 
-    # Initialize the Linear Regression model.
-    model = LinearRegression()
+    with torch.no_grad():
+        # Initialize the Linear Regression model.
+        model = LinearRegression()
 
-    # Fit the model on the training data.
-    model.fit(X_train, y_train)
+        # Fit the model on the training data.
+        model.fit(X_train, y_train)
 
-    # Use the trained model to predict the targets for the test set.
-    y_pred = model.predict(X_test)
+        # Use the trained model to predict the targets for the test set.
+        y_pred = model.predict(X_test)
 
     # Calculate regression metrics:
 
