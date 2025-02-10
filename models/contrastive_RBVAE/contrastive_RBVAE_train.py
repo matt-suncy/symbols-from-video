@@ -75,7 +75,7 @@ def contrast_loss(x1, x2, label, margin: float=1.0):
 
 # This is a CALLABLE
 ImageTransforms = T.Compose([
-    T.Resize((64, 64)),
+    T.Resize((512, 512)),
     T.ToTensor()
 ])
 
@@ -337,47 +337,43 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
     total_contrast_loss = 0.0
     for item in dataloader:
         # item shape: [B, 2, T, C, H, W]
+        num_batches, _, num_states, num_channels, height, width = item.size()
         item = item.to(device)
         # TODO: TensorBoard and/or multiply out the pair dimension during the forward pass
         # Separate the pairs of frames into tensors with shape [B, 1, T, C, H, W]
         # TODO: make a separate function to avoid duplicate lines
-        frame_1 = item[:, 0]
-        frame_2 = item[:, 1]
+        # Separate the pair of frames and process them in a loop.
+        frames = [item[:, i] for i in range(2)]
+        recon_losses = []
+        kl_losses = []
+        z_seqs = []
 
-        # Forward pass
-        x_recon_1, z_seq_1, logits_1 = model(frame_1, temperature=temperature, hard=False)
-        x_recon_2, z_seq_2, logits_2 = model(frame_2, temperature=temperature, hard=False)
+        for frame in frames:
+            x_recon, z_seq, logits = model(frame, temperature=temperature, hard=False)
+            recon_losses.append(recon_loss(x_recon, frame))
+            kl_losses.append(kl_binary_concrete(logits, p=bernoulli_p))
+            z_seqs.append(z_seq)
 
-        # Reconstruction loss
-        recon_loss_1 = recon_loss(x_recon_1, frame_1)
-        recon_loss_2 = recon_loss(x_recon_2, frame_2)
-        recon_loss_val = (recon_loss_1 + recon_loss_2) / 2.0
-
-        # KL loss
-        kl_loss_1 = kl_binary_concrete(logits_1, p=bernoulli_p)
-        kl_loss_2 = kl_binary_concrete(logits_2, p=bernoulli_p)
-        kl_loss_val = (kl_loss_1 + kl_loss_2) / 2.0
-
-        # Contrastive loss
-        contrast_loss_similar = contrast_loss(z_seq_1, z_seq_2, label=0)
+        # Average reconstruction and KL losses over the two frames.
+        recon_loss_val = sum(recon_losses) / len(recon_losses)
+        kl_loss_val = sum(kl_losses) / len(kl_losses)
+        
+        # Compute contrastive loss for the similar pair.
+        contrast_loss_similar = contrast_loss(z_seqs[0], z_seqs[1], label=0)
+        
+        # Compute contrastive loss for dissimilar consecutive states (using z_seq from the first frame).
         contrast_loss_dissim = 0
-        # Calculate the dissimilar contrastive loss over the states,
-        # just for one of the two sequences
-        # TODO: shuffle the state indices 
-        for state_index in range(int(item.shape[2]) - 1):
-            # Get latent sequences of shape [B, latent_dim] 
-            # Latent seq at state_index
-            dissim_z_a = z_seq_1[:, state_index]
-            # Latent seq at state_index + 1
-            dissim_z_b = z_seq_1[:, state_index+1]
+        for state_index in range(num_states - 1):
+            dissim_z_a = z_seqs[0][:, state_index]
+            dissim_z_b = z_seqs[0][:, state_index + 1]
             contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
-        # TODO: How to keep embeddings from neighboring states closer? Maybe L1 or Hamming dist.
-
-        contrast_loss_dissim = contrast_loss_dissim / float(int(item.shape[2]) - 1)
+        contrast_loss_dissim /= float(num_states - 1)
+        
         contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
 
         # Combine VAE losses and contrastive loss
-        loss = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
+        # loss = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
+        loss = recon_loss_val
         
         # Backprop
         optimizer.zero_grad()
@@ -395,7 +391,9 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
 
 if __name__ == "__main__":
 
-    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
+    frames_dir = Path(__file__).parent.parent.parent.joinpath(
+        "videos/frames/kid_playing_with_blocks_1.mp4"
+        )
     print(str(frames_dir))
     # NOTE: These number are for "kid playing with blocks"
     # Logic for creating state segments which are lists of tuples
@@ -413,7 +411,7 @@ if __name__ == "__main__":
         
 
     dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
@@ -425,7 +423,7 @@ if __name__ == "__main__":
     temperature = 0.5
 
     # beta is coefficient for KL
-    beta = 0.1
+    beta = 0.05
 
     # alpha is coefficient for contrastive loss
     alpha = 0.1

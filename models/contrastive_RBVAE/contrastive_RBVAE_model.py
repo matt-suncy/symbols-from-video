@@ -3,7 +3,7 @@ Author: Matthew Sun
 Description: Implementing a simple version of a Recurrent Binary Variational Autoencoder, 
 purpose is to figure out the details of the architecture
 
-# NOTE: MARKED FOR REVIEW
+# NOTE: MARKED FOR REreshape
 '''
 
 ### IMPORTS
@@ -49,29 +49,29 @@ class ConvEncoder(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels=64, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(in_channels, 64, kernel_size=4, stride=2, padding=1), 
             nn.ReLU(),
-            nn.Conv2d(64, 128, 4, 2, 1),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),            
             nn.ReLU(),
-            nn.Conv2d(128, 256, 4, 2, 1),
+            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),           
             nn.ReLU(),
             nn.Flatten()
         )
         # 1 logit per latent variable since we want num_categories = 2
-        self.fc = nn.Linear(256*8*8, latent_dim)
+        self.fc = nn.Linear(256*8*8*(8**2), latent_dim)
 
     def forward(self, x):
         # x: [B, C, H, W]
         h = self.conv(x)
         logits = self.fc(h) # [B, latent_dim]
-        logits = logits.view(x.size(0), self.latent_dim)
+        logits = logits.reshape(x.size(0), self.latent_dim)
         return logits
 
 
 class ConvDecoder(nn.Module):
     def __init__(self, out_channels=3, latent_dim=32):
         super().__init__()
-        self.fc = nn.Linear(latent_dim, 256*8*8)
+        self.fc = nn.Linear(latent_dim, 256*8*8*(8**2))
         self.deconv = nn.Sequential(
             nn.ConvTranspose2d(256, 128, 4, 2, 1),
             nn.ReLU(),
@@ -84,7 +84,7 @@ class ConvDecoder(nn.Module):
     def forward(self, z):
         # z: [B, latent_dim]
         h = self.fc(z)
-        h = h.view(h.size(0), 256, 8, 8)
+        h = h.reshape(h.size(0), 256, 64, 64)
         x_recon = self.deconv(h)
         return x_recon
 
@@ -143,13 +143,13 @@ class Seq2SeqBinaryVAE(nn.Module):
         B, T, C, H, W = x.size()
 
         # Feed through conv encoder
-        x_reshaped = x.view(B*T, C, H, W)
+        x_reshaped = x.reshape(B*T, C, H, W)
         logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
 
         z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
 
         # Reshape z => [B, T, latent_dim]
-        z_seq = z.view(B, T, self.latent_dim)   
+        z_seq = z.reshape(B, T, self.latent_dim)   
 
         # Feed through encoder RNN
         h_seq, _ = self.encoder_rnn(z_seq) # [B, T, hidden_dim]
@@ -158,9 +158,9 @@ class Seq2SeqBinaryVAE(nn.Module):
         d_seq, _ = self.decoder_rnn(h_seq) # [B, T, latent_dim]
 
         # Decode each d_t for reconstruction
-        d_seq_flat = d_seq.view(B*T, self.latent_dim)
+        d_seq_flat = d_seq.reshape(B*T, self.latent_dim)
         x_recon = self.decoder_cnn(d_seq_flat)
-        x_recon = x_recon.view(B, T, C, H, W)
+        x_recon = x_recon.reshape(B, T, C, H, W)
 
         return x_recon, z_seq, logits # All of these are needed for backprop
 
@@ -169,13 +169,13 @@ class Seq2SeqBinaryVAE(nn.Module):
         B, T, C, H, W = x.size()
 
         # Feed through conv encoder
-        x_reshaped = x.view(B*T, C, H, W)
+        x_reshaped = x.reshape(B*T, C, H, W)
         logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
 
         z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
 
         # Reshape z => [B, T, latent_dim]
-        z_seq = z.view(B, T, self.latent_dim)
+        z_seq = z.reshape(B, T, self.latent_dim)
         
         return z_seq
 
