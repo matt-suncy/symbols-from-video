@@ -2,8 +2,6 @@
 Author: Matthew Sun
 Description: Implementing training script for a simple RB-VAE, 
 purpose is to figure out the details of the architecture
-
-# NOTE: MARKED FOR REVIEW
 '''
 
 ### IMPORTS
@@ -17,6 +15,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
+
 from contrastive_RBVAE_model import Seq2SeqBinaryVAE
 ###
 
@@ -80,55 +80,6 @@ ImageTransforms = T.Compose([
 ])
 
 ### DATASETS ###
-
-class StateSegmentDataset(Dataset):
-    """
-    --- Args ---
-    frames_dir: str
-        Path to directory with frame PNGs.
-    state_segments: list of tuples 
-        Each tuple is (start_idx, end_idx) for that state.
-    transform: callable, optional 
-        Optional transform to be applied on the frames.
-    """
-    def __init__(self, frames_dir, state_segments, transform=None):
-        self.frames_dir = frames_dir
-        self.state_segments = state_segments
-        self.transform = transform
-
-    def __len__(self):
-        '''
-        The dataset length is the number of STATES, not frames
-        '''
-        return len(self.state_segments)
-
-    def __getitem__(self, idx):
-        start_idx, end_idx = self.state_segments[idx]
-        frame_count = end_idx - start_idx
-
-        frames = []
-        for frame_idx in range(start_idx, end_idx):
-            filename = f"{frame_idx:010d}.jpg"
-            path = os.path.join(self.frames_dir, filename)
-            img = Image.open(path).convert('RGB')
-            if self.transform:
-                img = self.transform(img)
-            # img: [C, H, W]
-            frames.append(img)
-
-        # Stack frames along time dimension
-        # After stacking: frames_tensor.shape should be [FrameCount, C, H, W]
-        frames_tensor = torch.stack(frames, dim=0)
-
-        '''
-        Suggestions from GPT-o1:
-        - You might want a shape of [B, T, C, H, W] for the model input where B=1 here.
-        - The model expects [B, T, C, H, W], so keep [T, C, H, W].
-        - The DataLoader with batch_size > 1 will add the batch dimension.
-
-        although, I think the data is already in the shape of [B, T, C, H, W]? 
-        '''
-        return frames_tensor
 
 # TODO: Change to shuffle --> pair up contiguous frames
 class SampleStatePairDataset(Dataset):
@@ -300,49 +251,38 @@ class ShuffledStatePairDataset(Dataset):
 
 ### TRAINING LOOP ###
 
-def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, bernoulli_p=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
+def train_one_epoch(model, device, dataloader, optimizer, epoch, writer=None, 
+                    temperature=0.5, bernoulli_p=0.5, margin=1.0, 
+                    alpha_contrast=0.1, beta_kl=0.1):
     """
-    --- Args ---
-    model: NN Class
-        Seq2SeqBinaryVAE (or similar) neural net class.
-    device: PyTorch device
-        A PyTorch object determining what device the data is on.
-    dataloader: Dataloader Class
-        Yields sequences from each state segment.
-    optimizer: Optimizer Class
-        Any PyTorch optimizer.
-    temperature: float
-        Determines the "smoothness" of the samples.
-    margin: float
-        Determines the threshold for dissimilarity.
-    alpha_contrast: float
-        Coefficient for weighting of contrastive loss.
-    beta_kl: float
-        Coefficient for weighting of KL Divergence loss.
-
-    --- Returns ---
-    total_loss: float
-        Loss value divided by the number of states.
-    recon_loss: float
-        The average reconstruction loss value.
-    kl_loss: float
-        The average KL divergence loss value.
-    contrast_loss: float
-        The average contrastive loss value. 
+    Trains the model for one epoch and logs losses to TensorBoard.
+    Args:
+        model: The RB-VAE model.
+        device: PyTorch device.
+        dataloader: DataLoader yielding batches of shape [B, 2, T, C, H, W].
+        optimizer: Optimizer for updating model parameters.
+        writer: Optional TensorBoard SummaryWriter instance.
+        epoch: Current epoch number (for logging).
+        temperature: Temperature parameter for sampling.
+        bernoulli_p: Target probability for the Bernoulli prior.
+        margin: Margin for the contrastive loss.
+        alpha_contrast: Weight for contrastive loss.
+        beta_kl: Weight for KL divergence loss.
+    Returns:
+        A tuple of average losses: (total_loss, recon_loss, kl_loss, contrast_loss).
     """
     model.train()
     total_loss = 0.0
     total_recon_loss = 0.0
     total_kl_loss = 0.0
     total_contrast_loss = 0.0
-    for item in dataloader:
+
+    num_batches = len(dataloader)
+    for batch_idx, item in enumerate(dataloader):
         # item shape: [B, 2, T, C, H, W]
-        num_batches, _, num_states, num_channels, height, width = item.size()
+        global_step = epoch * num_batches + batch_idx
+        num_batches_item, _, num_states, _, _, _ = item.size()
         item = item.to(device)
-        # TODO: TensorBoard and/or multiply out the pair dimension during the forward pass
-        # Separate the pairs of frames into tensors with shape [B, 1, T, C, H, W]
-        # TODO: make a separate function to avoid duplicate lines
-        # Separate the pair of frames and process them in a loop.
         frames = [item[:, i] for i in range(2)]
         recon_losses = []
         kl_losses = []
@@ -354,14 +294,14 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
             kl_losses.append(kl_binary_concrete(logits, p=bernoulli_p))
             z_seqs.append(z_seq)
 
-        # Average reconstruction and KL losses over the two frames.
+        # Average losses over the two frame inputs.
         recon_loss_val = sum(recon_losses) / len(recon_losses)
         kl_loss_val = sum(kl_losses) / len(kl_losses)
         
         # Compute contrastive loss for the similar pair.
         contrast_loss_similar = contrast_loss(z_seqs[0], z_seqs[1], label=0)
         
-        # Compute contrastive loss for dissimilar consecutive states (using z_seq from the first frame).
+        # Compute contrastive loss for dissimilar consecutive states.
         contrast_loss_dissim = 0
         for state_index in range(num_states - 1):
             dissim_z_a = z_seqs[0][:, state_index]
@@ -371,82 +311,88 @@ def train_one_epoch(model, device, dataloader, optimizer, temperature=0.5, berno
         
         contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
 
-        # Combine VAE losses and contrastive loss
-        # loss = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
-        loss = recon_loss_val
+        # Combine all loss components.
+        total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
         
-        # Backprop
         optimizer.zero_grad()
-        loss.backward()
+        total_loss_val.backward()
         optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += total_loss_val.item()
         total_recon_loss += recon_loss_val.item()
         total_kl_loss += kl_loss_val.item()
         total_contrast_loss += contrast_loss_val.item()
 
-    return total_loss / len(dataloader), total_recon_loss / len(dataloader), \
-        total_kl_loss / len(dataloader), total_contrast_loss / len(dataloader)
+        # Log each batch loss to TensorBoard.
+        if writer is not None:
+            writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), global_step)
+            writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), global_step)
+            writer.add_scalar('Batch/KL_Divergence', kl_loss_val.item(), global_step)
+            writer.add_scalar('Batch/Contrastive_Loss', contrast_loss_val.item(), global_step)
+
+    avg_total_loss = total_loss / num_batches
+    avg_recon_loss = total_recon_loss / num_batches
+    avg_kl_loss = total_kl_loss / num_batches
+    avg_contrast_loss = total_contrast_loss / num_batches
+
+    # Log epoch-level average losses.
+    if writer is not None:
+        writer.add_scalar('Epoch/Total_Loss', avg_total_loss, epoch)
+        writer.add_scalar('Epoch/Reconstruction_Loss', avg_recon_loss, epoch)
+        writer.add_scalar('Epoch/KL_Divergence', avg_kl_loss, epoch)
+        writer.add_scalar('Epoch/Contrastive_Loss', avg_contrast_loss, epoch)
+
+    return avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss
 
 
 if __name__ == "__main__":
 
-    frames_dir = Path(__file__).parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1.mp4"
-        )
+    # Set up paths and state segmentation.
+    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
     print(str(frames_dir))
-    # NOTE: These number are for "kid playing with blocks"
-    # Logic for creating state segments which are lists of tuples
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
     grey_out = 25
     state_segments = []
     for i in range(len(flags)):
         if i > 0:
-            state_segments.append((flags[i-1]+grey_out, flags[i]-grey_out+1))
+            state_segments.append((flags[i-1] + grey_out, flags[i] - grey_out + 1))
         elif i == len(flags)-1:
-            state_segments.append((flags[i]+grey_out, last_frame+1))
+            state_segments.append((flags[i] + grey_out, last_frame + 1))
         else:
-            state_segments.append((0, flags[0]-grey_out+1))
+            state_segments.append((0, flags[0] - grey_out + 1))
         
-
     dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16).to(device)
+    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     num_epochs = 10
-        
-    # temperature is for Softmax
-    temperature = 0.5
 
-    # beta is coefficient for KL
-    beta = 0.05
+    temperature = 0.5 # Temperature for Softmax
+    beta = 0.05 # Coefficient for KL divergence
+    alpha = 0.1 # Coefficient for contrastive loss
+    p = 0.1 # Bernoulli success probability
 
-    # alpha is coefficient for contrastive loss
-    alpha = 0.1
+    # Initialize TensorBoard SummaryWriter.
+    writer = SummaryWriter(log_dir="./runs/rb_vae_experiment")
 
-    # p is the success prob parameter for the Bernoulli distribution
-    p = 0.1
-
-    # TODO: Add temperature annealing schedule for reparameterization
-    # Categorical reparameterization related values
-    num_global_iters = 0
-    max_iters = num_epochs * len(dataset)
-
-    # DataLoader yields video sequences x: [B, 2, T, C, H, W]
+    # Main training loop.
     for epoch in range(num_epochs):
-        
-        total_loss_val, recon_loss_val, kl_loss_val, contrast_loss_val = \
-            train_one_epoch(model, device, dataloader, optimizer, temperature=temperature, 
-            alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p) 
+        avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss = train_one_epoch(
+            model, device, dataloader, optimizer, epoch, writer=writer,
+            temperature=temperature, alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p
+        )
+        print(f"Epoch {epoch+1} --- Total Loss: {avg_total_loss:.4f} | Recon: {avg_recon_loss:.4f} | "
+              f"KL: {avg_kl_loss:.4f} | Contrastive: {avg_contrast_loss:.4f}")
 
-        print(f"Epoch {epoch+1} --- Loss: {total_loss_val} Reconstruction: {recon_loss_val} \
-            KL: {kl_loss_val} Contrastive: {contrast_loss_val}")
+    # Optionally, add the model graph (requires a sample input).
+    sample_input = next(iter(dataloader)).to(device)
+    writer.add_graph(model, sample_input[:, 0])
 
-    # Saving the model
+    # Save the model.
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
-    stop = True
     torch.save(model.state_dict(), save_path)
+    writer.close()
