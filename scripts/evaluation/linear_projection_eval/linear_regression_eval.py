@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
+from matplotlib import pyplot as plt 
 
 from sklearn.datasets import make_regression  # For generating synthetic data
 from sklearn.linear_model import LinearRegression  # Linear regression model
@@ -30,7 +31,7 @@ from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
 
 # This is a CALLABLE
 ImageTransforms = T.Compose([
-    T.Resize((64, 64)),
+    T.Resize((512, 512)),
     T.ToTensor()
 ])
 
@@ -48,6 +49,14 @@ def load_frames(frames_dir, frame_indices: tuple, transform=None):
         images.append(image)
 
     return images
+
+def save_tensor_as_image(tensor):
+    tensor_reshaped = torch.squeeze(tensor).detach()
+    transform = T.ToPILImage()
+    image = transform(tensor_reshaped)
+    save_path = Path(__file__).parent.joinpath("example_reconstruction.jpg")
+    image = image.save(save_path)
+    
 
 def main():
     # Set a random seed for reproducibility
@@ -73,7 +82,7 @@ def main():
         "models/contrastive_RBVAE/saved_RBVAE"
         )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=16, hidden_dim=16)
+    rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
     rbvae_model.load_state_dict(torch.load(model_path, weights_only=True))
     rbvae_model.to(device)
     rbvae_model.eval()
@@ -90,10 +99,12 @@ def main():
 
     embeddings = []
     for i in range(len(frames)):
-        # Give frames so that shape is [1, 1, 3, 64, 64]
+        # Give frames so that shape is [1, 1, 3, H, W]
         frame_expanded = frames[i][None, None, :, :, :].to(device)
-        _, z_seq, _ = rbvae_model(frame_expanded, temperature=0.5)
-        embeddings.append(torch.squeeze(z_seq))
+        reconstruction, h_seq, _ = rbvae_model(frame_expanded, temperature=0.5)
+        save_tensor_as_image(reconstruction)
+        print(torch.count_nonzero(h_seq))
+        embeddings.append(torch.squeeze(h_seq))
     embeddings = torch.stack(embeddings, dim=0).to('cpu')
 
     # Flatten out frame tensors
