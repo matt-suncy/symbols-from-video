@@ -134,8 +134,8 @@ class Seq2SeqBinaryVAE(nn.Module):
         self.latent_dim = latent_dim
         self.encoder_cnn = ConvEncoder(in_channels, latent_dim)
         self.decoder_cnn = ConvDecoder(out_channels, latent_dim)
-        self.encoder_rnn = EncoderRNN(latent_dim=latent_dim, hidden_dim=hidden_dim)
-        self.decoder_rnn = DecoderRNN(hidden_dim=hidden_dim, latent_dim=latent_dim)
+        self.encoder_rnn = EncoderRNN(latent_dim=latent_dim, hidden_dim=latent_dim)
+        self.decoder_rnn = DecoderRNN(hidden_dim=latent_dim, latent_dim=latent_dim)
 
     def forward(self, x, temperature=1.0, hard=False):
         # The pair dimension isn't here since we're feeding one by one
@@ -144,38 +144,45 @@ class Seq2SeqBinaryVAE(nn.Module):
 
         # Feed through conv encoder
         x_reshaped = x.reshape(B*T, C, H, W)
-        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
-
-        z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
-
-        # Reshape z => [B, T, latent_dim]
-        z_seq = z.reshape(B, T, self.latent_dim)   
+        x_conv = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
+        x_conv= x_conv.reshape(B, T, self.latent_dim)
 
         # Feed through encoder RNN
-        h_seq, _ = self.encoder_rnn(z_seq) # [B, T, hidden_dim]
+        h_seq, _ = self.encoder_rnn(x_conv) # [B, T, hidden_dim]
+
+        h_seq_reshaped = h_seq.reshape(B*T, self.latent_dim) # [B*T, latent_dim]
+
+        z = binary_concrete_logits(h_seq_reshaped, temperature=temperature, hard=hard)
+        z_seq = z.reshape(B, T, self.latent_dim) # Reshape z => [B, T, latent_dim]
 
         # Feed through decoder RNN
-        d_seq, _ = self.decoder_rnn(h_seq) # [B, T, latent_dim]
+        d_seq, _ = self.decoder_rnn(z_seq) # [B, T, latent_dim]
 
         # Decode each d_t for reconstruction
         d_seq_flat = d_seq.reshape(B*T, self.latent_dim)
         x_recon = self.decoder_cnn(d_seq_flat)
         x_recon = x_recon.reshape(B, T, C, H, W)
 
-        return x_recon, z_seq, logits # All of these are needed for backprop
+        return x_recon, h_seq, z_seq # All of these are needed for backprop
 
-    def encode(self, x, temperature=0.5, hard=False):
-        # x: [B, T, C, H, W]
+    def encode_binary_concrete(self, x, temperature=0.5, hard=False):
+        '''
+        Returns the latent variables with Binary Concrete applied.
+        '''
+       # x: [B, T, C, H, W]
         B, T, C, H, W = x.size()
 
         # Feed through conv encoder
         x_reshaped = x.reshape(B*T, C, H, W)
-        logits = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
+        x_reshaped = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
 
-        z = binary_concrete_logits(logits, temperature=temperature, hard=hard)
+        # Feed through encoder RNN
+        h_seq, _ = self.encoder_rnn(z_seq) # [B, T, hidden_dim]
 
-        # Reshape z => [B, T, latent_dim]
-        z_seq = z.reshape(B, T, self.latent_dim)
-        
+        h_seq_reshaped = h_seq.reshape(B*T, latent_dim) # [B*T, latent_dim]
+
+        z = binary_concrete_logits(h_seq_reshaped, temperature=temperature, hard=hard)
+        z_seq = z.reshape(B, T, self.latent_dim) # Reshape z => [B, T, latent_dim]
+
         return z_seq
 
