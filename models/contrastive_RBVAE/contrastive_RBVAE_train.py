@@ -167,12 +167,27 @@ class ShuffledStatePairDataset(Dataset):
 ### TRAINING LOOP ###
 
 def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, writer=None, 
-                    init_temperature=1.0, min_temperature=0.5, anneal_rate=1e-4, 
+                    init_temperature=1.0, final_temperature=0.5, anneal_rate=1e-4, num_steps_to_update=100,
                     bernoulli_p=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
     """
     Trains the model for one epoch and logs losses to TensorBoard.
-    Temperature is annealed each batch using an exponential schedule:
-      T = max(min_temperature, init_temperature * exp(-anneal_rate * global_step))
+    Args:
+        model: The RB-VAE model.
+        device: PyTorch device.
+        dataloader: DataLoader yielding batches of shape [B, 2, T, C, H, W].
+        optimizer: Optimizer for updating model parameters.
+        writer: Optional TensorBoard SummaryWriter instance.
+        epoch: Current epoch number (for logging).
+        init_temperature: Initial temperature for Gumbel-Softmax.
+        final_temperature: Minimum temperature to anneal to.
+        anneal_rate: Exponential decay rate for temperature.
+        num_steps_to_update: Number of steps between temperature updates.
+        bernoulli_p: Target probability for the Bernoulli prior.
+        margin: Margin for the contrastive loss.
+        alpha_contrast: Weight for contrastive loss.
+        beta_kl: Weight for KL divergence loss.
+    Returns:
+        A tuple of average losses: (total_loss, recon_loss, kl_loss, contrast_loss).
     """
     model.train()
     total_loss = 0.0
@@ -181,14 +196,16 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
     total_contrast_loss = 0.0
 
     num_batches = len(dataloader)
+    temperature = init_temperature  # start with the initial temperature
     for batch_idx, item in enumerate(dataloader):
+        # item shape: [B, 2, T, C, H, W]
         global_step = epoch * num_batches + batch_idx + 1
 
-        # Update temperature every batch
-        current_temperature = max(min_temperature, 
-            init_temperature * np.exp(-anneal_rate * global_step))
-        if writer is not None:
-            writer.add_scalar('Batch/Temperature', current_temperature, global_step)
+        # Update the temperature every num_steps_to_update steps.
+        if global_step % num_steps_to_update == 0:
+            temperature = max(final_temperature, init_temperature * np.exp(-anneal_rate * global_step))
+            if writer is not None:
+                writer.add_scalar('Batch/Temperature', temperature, global_step)
 
         num_batches_item, _, num_states, _, _, _ = item.size()
         item = item.to(device)
@@ -198,30 +215,24 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         h_seqs = []
 
         for frame in frames:
-            x_recon, h_seq, bc_seq = model(frame, temperature=current_temperature, hard=False)
+            x_recon, h_seq, bc_seq = model(frame, temperature=temperature, hard=False)
             recon_losses.append(recon_loss(x_recon, frame))
-            # KL loss is done with Binary-Concrete logits   
             kl_losses.append(kl_binary_concrete(bc_seq, p=bernoulli_p))
             h_seqs.append(h_seq)
 
-        # Average losses over the two frame inputs.
         recon_loss_val = sum(recon_losses) / len(recon_losses)
         kl_loss_val = sum(kl_losses) / len(kl_losses)
         
-        # Compute contrastive loss for the similar pair.
         contrast_loss_similar = contrast_loss(h_seqs[0], h_seqs[1], label=0)
         
-        # Compute contrastive loss for dissimilar consecutive states.
-        # This loss is computed with the hidden sequences BEFORE Binary-Concrete
         contrast_loss_dissim = 0
         for state_index in range(num_states - 1):
-            dissim_h_a = h_seqs[0][:, state_index]
-            dissim_h_b = h_seqs[0][:, state_index + 1]
-            contrast_loss_dissim += contrast_loss(dissim_h_a, dissim_h_b, label=1)
+            dissim_z_a = h_seqs[0][:, state_index]
+            dissim_z_b = h_seqs[0][:, state_index + 1]
+            contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
         contrast_loss_dissim /= float(num_states - 1)
         
         contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
-
         total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
         
         optimizer.zero_grad()
@@ -233,7 +244,6 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         total_kl_loss += kl_loss_val.item()
         total_contrast_loss += contrast_loss_val.item()
 
-        # Log each batch loss to TensorBoard.
         if writer is not None:
             writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), global_step)
             writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), global_step)
@@ -245,7 +255,6 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
     avg_kl_loss = total_kl_loss / num_batches
     avg_contrast_loss = total_contrast_loss / num_batches
 
-    # Log epoch-level average losses.
     if writer is not None:
         writer.add_scalar('Epoch/Total_Loss', avg_total_loss, epoch)
         writer.add_scalar('Epoch/Reconstruction_Loss', avg_recon_loss, epoch)
@@ -259,7 +268,7 @@ if __name__ == "__main__":
 
     # Set up paths and state segmentation.
     frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
-    # print(str(frames_dir))
+    print(str(frames_dir))
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
     grey_out = 25
@@ -281,34 +290,32 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     num_epochs = 10
-    # Temperature schedule parameters
-    init_temperature = 1.0
-    min_temperature = 0.5
-    anneal_rate = 1e-4
+    max_iters = num_epochs * len(dataloader)
+    num_temp_updates = 25
+    num_steps_to_update = int(max_iters / num_temp_updates)
 
-    # Loss related parameters
-    beta = 0.1  # Coefficient for KL divergence
-    alpha = 0.1  # Coefficient for contrastive loss
-    p = 0.1  # Bernoulli success probability
+    init_temperature = 1.0      # Initial temperature for Gumbel-Softmax
+    final_temperature = 0.5     # Minimum temperature after annealing
+    anneal_rate = 1e-4          # Annealing rate
+    beta = 0.1                # Coefficient for KL divergence
+    alpha = 0.1               # Coefficient for contrastive loss
+    p = 0.1                   # Bernoulli success probability
 
     writer = SummaryWriter(log_dir="./runs/rb_vae_experiment")
 
-    # Main training loop.
     for epoch in range(num_epochs):
         avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss = train_one_epoch(
             model, device, dataloader, optimizer, batch_size, epoch, writer=writer,
-            init_temperature=init_temperature, min_temperature=min_temperature, anneal_rate=anneal_rate,
-            alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p
+            init_temperature=init_temperature, final_temperature=final_temperature, anneal_rate=anneal_rate,
+            num_steps_to_update=num_steps_to_update, alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p
         )
         print(f"Epoch {epoch+1} --- Total Loss: {avg_total_loss:.4f} | Recon: {avg_recon_loss:.4f} | "
               f"KL: {avg_kl_loss:.4f} | Contrastive: {avg_contrast_loss:.4f}")
 
-    # Log the model graph with a sample input.
     model.eval()
     sample_input = next(iter(dataloader)).to(device)
     writer.add_graph(model, sample_input[:, 0])
 
-    # Save the model.
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
     torch.save(model.state_dict(), save_path)
     writer.close()
