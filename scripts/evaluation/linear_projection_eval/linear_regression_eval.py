@@ -101,9 +101,9 @@ def main():
     for i in range(len(frames)):
         # Give frames so that shape is [1, 1, 3, H, W]
         frame_expanded = frames[i][None, None, :, :, :].to(device)
-        reconstruction, h_seq, _ = rbvae_model(frame_expanded, temperature=0.5)
+        reconstruction, h_seq, bc_seq = rbvae_model(frame_expanded, temperature=0.5)
         save_tensor_as_image(reconstruction)
-        print(torch.count_nonzero(h_seq))
+        print(torch.count_nonzero(bc_seq))
         embeddings.append(torch.squeeze(h_seq))
     embeddings = torch.stack(embeddings, dim=0).to('cpu')
 
