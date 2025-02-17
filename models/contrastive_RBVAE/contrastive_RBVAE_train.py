@@ -294,12 +294,13 @@ if __name__ == "__main__":
     num_temp_updates = 25
     num_steps_to_update = int(max_iters / num_temp_updates)
 
-    init_temperature = 1.0      # Initial temperature for Gumbel-Softmax
-    final_temperature = 0.5     # Minimum temperature after annealing
-    anneal_rate = 1e-4          # Annealing rate
-    beta = 0.1                # Coefficient for KL divergence
-    alpha = 0.1               # Coefficient for contrastive loss
-    p = 0.1                   # Bernoulli success probability
+    init_temperature = 1.0 # Initial temperature for Gumbel-Softmax
+    final_temperature = 0.5 # Minimum temperature after annealing
+    anneal_rate = 1e-4 # Annealing rate
+    beta = 0.2 # Coefficient for KL divergence
+    alpha = 0.2 # Coefficient for contrastive loss
+    p = 0.1 # Bernoulli success probability
+    margin = 0.5 #
 
     writer = SummaryWriter(log_dir="./runs/rb_vae_experiment")
 
@@ -307,7 +308,7 @@ if __name__ == "__main__":
         avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss = train_one_epoch(
             model, device, dataloader, optimizer, batch_size, epoch, writer=writer,
             init_temperature=init_temperature, final_temperature=final_temperature, anneal_rate=anneal_rate,
-            num_steps_to_update=num_steps_to_update, alpha_contrast=alpha, beta_kl=beta, bernoulli_p=p
+            num_steps_to_update=num_steps_to_update, alpha_contrast=alpha, margin=margin, beta_kl=beta, bernoulli_p=p
         )
         print(f"Epoch {epoch+1} --- Total Loss: {avg_total_loss:.4f} | Recon: {avg_recon_loss:.4f} | "
               f"KL: {avg_kl_loss:.4f} | Contrastive: {avg_contrast_loss:.4f}")
@@ -319,3 +320,5 @@ if __name__ == "__main__":
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
     torch.save(model.state_dict(), save_path)
     writer.close()
+
+    print("Run 'tensorboard --logdir=runs' to visualize the RBVAE architecture.")
