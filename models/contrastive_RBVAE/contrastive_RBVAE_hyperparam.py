@@ -11,11 +11,9 @@ from contrastive_RBVAE_train import train_one_epoch, ShuffledStatePairDataset, I
 
 def objective(trial):
     # Sample hyperparameters with Optuna
-    init_temperature = trial.suggest_float('init_temperature', 0.5, 2.0)
-    final_temperature = trial.suggest_float('final_temperature', 0.3, 1.0)
     anneal_rate = trial.suggest_loguniform('anneal_rate', 1e-5, 1e-3)
-    beta_kl = trial.suggest_float('beta_kl', 0.05, 1.0)
-    alpha_contrast = trial.suggest_float('alpha_contrast', 0.01, 0.5)
+    beta_kl = trial.suggest_float('beta_kl', 0.05, 0.5)
+    alpha_contrast = trial.suggest_float('alpha_contrast', 0.05, 0.5)
     margin = trial.suggest_float('margin', 0.1, 2.0)
     lr = trial.suggest_loguniform('lr', 1e-5, 1e-3)
     
@@ -38,7 +36,7 @@ def objective(trial):
     for epoch in range(num_epochs):
         avg_total_loss, _, _, _ = train_one_epoch(
             model, device, dataloader, optimizer, batch_size=4, epoch=epoch,
-            init_temperature=init_temperature, final_temperature=final_temperature,
+            init_temperature=1.0, final_temperature=0.5,
             anneal_rate=anneal_rate, num_steps_to_update=50,      # Adjust num_steps_to_update as needed
             alpha_contrast=alpha_contrast, margin=margin, beta_kl=beta_kl, bernoulli_p=0.5
         )
