@@ -15,7 +15,7 @@ import torchvision.transforms as T
 import numpy as np
 ###
 
-def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-10):
+def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-8):
     """
     Args:
     logits: [batch, latent_dim] 
@@ -93,7 +93,7 @@ class EncoderRNN(nn.Module):
     # Should latent_dim == hidden_dim? 
     # Probably right? We just want to capture temporal dependencies so 
     # what's the point of making the hidden dim different
-    def __init__(self, latent_dim=32, hidden_dim=32, num_layers=1):
+    def __init__(self, latent_dim=32, hidden_dim=32, num_layers=2):
         super().__init__()
         self.lstm = nn.LSTM(latent_dim, hidden_dim, num_layers, batch_first=True)
 
@@ -105,7 +105,7 @@ class EncoderRNN(nn.Module):
 
 
 class DecoderRNN(nn.Module):
-    def __init__(self,  hidden_dim=32, latent_dim=32, num_layers=1):
+    def __init__(self,  hidden_dim=32, latent_dim=32, num_layers=2):
         super().__init__()
         # Decoder RNN maps from encoder hidden states to decoder states
         # We'll feed the encoder h_seq as inputs directly (like teacher forcing)
