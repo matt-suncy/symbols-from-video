@@ -31,7 +31,24 @@ def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
 
-def kl_binary_concrete(q_logits, p=0.5, eps=1e-10):
+def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True, 
+    size_average=None, reduce=None, reduction='mean'):
+
+    return F.triplet_margin_loss(
+        anchor=anchor, 
+        positive=pos, 
+        negative=neg, 
+        margin=margin, 
+        p=p, 
+        eps=eps, 
+        swap=swap, 
+        size_average=size_average, 
+        reduce=reduce, 
+        reduction=reduction
+        )   
+
+
+def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
     '''
     Calculates the KL Divergence between input logits and a 
     Bernoulli distribution.
@@ -168,7 +185,7 @@ class ShuffledStatePairDataset(Dataset):
 
 def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, writer=None, 
                     init_temperature=1.0, final_temperature=0.5, anneal_rate=1e-4, num_steps_to_update=100,
-                    bernoulli_p=0.5, margin=1.0, alpha_contrast=0.1, beta_kl=0.1):
+                    bernoulli_p=0.5, margin=1.0, alpha_triplet=0.1, beta_kl=0.1):
     """
     Trains the model for one epoch and logs losses to TensorBoard.
     Args:
@@ -183,17 +200,17 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         anneal_rate: Exponential decay rate for temperature.
         num_steps_to_update: Number of steps between temperature updates.
         bernoulli_p: Target probability for the Bernoulli prior.
-        margin: Margin for the contrastive loss.
-        alpha_contrast: Weight for contrastive loss.
+        margin: Margin for the triplet loss.
+        alpha_triplet: Weight for triplet loss.
         beta_kl: Weight for KL divergence loss.
     Returns:
-        A tuple of average losses: (total_loss, recon_loss, kl_loss, contrast_loss).
+        A tuple of average losses: (total_loss, recon_loss, kl_loss, triplet_loss).
     """
     model.train()
     total_loss = 0.0
     total_recon_loss = 0.0
     total_kl_loss = 0.0
-    total_contrast_loss = 0.0
+    total_triplet_loss = 0.0
 
     num_batches = len(dataloader)
     temperature = init_temperature  # start with the initial temperature
@@ -223,17 +240,26 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         recon_loss_val = sum(recon_losses) / len(recon_losses)
         kl_loss_val = sum(kl_losses) / len(kl_losses)
         
-        contrast_loss_similar = contrast_loss(h_seqs[0], h_seqs[1], label=0)
+        # contrast_loss_similar = contrast_loss(h_seqs[0], h_seqs[1], label=0)
         
-        contrast_loss_dissim = 0
+        # contrast_loss_dissim = 0
+        # for state_index in range(num_states - 1):
+        #     dissim_z_a = h_seqs[0][:, state_index]
+        #     dissim_z_b = h_seqs[0][:, state_index + 1]
+        #     contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
+        # contrast_loss_dissim /= float(num_states - 1)
+
+        triplet_loss_val = 0
+        # Loop over states, excluding the last state since we need a "next" state for the negative sample.
         for state_index in range(num_states - 1):
-            dissim_z_a = h_seqs[0][:, state_index]
-            dissim_z_b = h_seqs[0][:, state_index + 1]
-            contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
-        contrast_loss_dissim /= float(num_states - 1)
+            # Define the triplet:
+            anchor = h_seqs[0][:, state_index]    # From the first frame at current state
+            positive = h_seqs[1][:, state_index]    # From the second frame (same state)
+            negative = h_seqs[0][:, state_index + 1]  # From the first frame of the next state
+            triplet_loss_val += triplet_loss(anchor, positive, negative, margin=margin)
+        triplet_loss_val /= float(num_states - 1)
         
-        contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
-        total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_contrast * contrast_loss_val
+        total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_triplet * triplet_loss_val
         
         optimizer.zero_grad()
         total_loss_val.backward()
@@ -242,26 +268,26 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         total_loss += total_loss_val.item()
         total_recon_loss += recon_loss_val.item()
         total_kl_loss += kl_loss_val.item()
-        total_contrast_loss += contrast_loss_val.item()
+        total_triplet_loss += triplet_loss_val.item()
 
         if writer is not None:
             writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), global_step)
             writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), global_step)
             writer.add_scalar('Batch/KL_Divergence', kl_loss_val.item(), global_step)
-            writer.add_scalar('Batch/Contrastive_Loss', contrast_loss_val.item(), global_step)
+            writer.add_scalar('Batch/Triplet_Loss', triplet_loss_val.item(), global_step)
 
     avg_total_loss = total_loss / num_batches
     avg_recon_loss = total_recon_loss / num_batches
     avg_kl_loss = total_kl_loss / num_batches
-    avg_contrast_loss = total_contrast_loss / num_batches
+    avg_triplet_loss = total_triplet_loss / num_batches
 
     if writer is not None:
         writer.add_scalar('Epoch/Total_Loss', avg_total_loss, epoch)
         writer.add_scalar('Epoch/Reconstruction_Loss', avg_recon_loss, epoch)
         writer.add_scalar('Epoch/KL_Divergence', avg_kl_loss, epoch)
-        writer.add_scalar('Epoch/Contrastive_Loss', avg_contrast_loss, epoch)
+        writer.add_scalar('Epoch/Triplet_Loss', avg_triplet_loss, epoch)
 
-    return avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss
+    return avg_total_loss, avg_recon_loss, avg_kl_loss, avg_triplet_loss
 
 
 if __name__ == "__main__":
@@ -271,7 +297,7 @@ if __name__ == "__main__":
     print(str(frames_dir))
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-    grey_out = 25
+    grey_out = 10
     state_segments = []
     for i in range(len(flags)):
         if i > 0:
@@ -281,7 +307,7 @@ if __name__ == "__main__":
         else:
             state_segments.append((0, flags[0] - grey_out + 1))
     
-    batch_size = 4
+    batch_size = 16
     dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -289,33 +315,45 @@ if __name__ == "__main__":
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    num_epochs = 10
+    num_epochs = 30
     max_iters = num_epochs * len(dataloader)
-    num_temp_updates = 25
+    num_temp_updates = 150
     num_steps_to_update = int(max_iters / num_temp_updates)
 
     init_temperature = 1.0 # Initial temperature for Gumbel-Softmax
     final_temperature = 0.5 # Minimum temperature after annealing
     anneal_rate = 1e-4 # Annealing rate
-    beta = 0.2 # Coefficient for KL divergence
-    alpha = 0.2 # Coefficient for contrastive loss
-    p = 0.1 # Bernoulli success probability
-    margin = 0.5 #
+    beta = 0.1 # Coefficient for KL divergence
+    alpha = 0.1 # Coefficient for triplet loss
+    p = 0.5 # Bernoulli success probability
+    margin = 0.2 # Margin for triplet contrast loss
 
     writer = SummaryWriter(log_dir="./runs/rb_vae_experiment")
 
     for epoch in range(num_epochs):
-        avg_total_loss, avg_recon_loss, avg_kl_loss, avg_contrast_loss = train_one_epoch(
-            model, device, dataloader, optimizer, batch_size, epoch, writer=writer,
-            init_temperature=init_temperature, final_temperature=final_temperature, anneal_rate=anneal_rate,
-            num_steps_to_update=num_steps_to_update, alpha_contrast=alpha, margin=margin, beta_kl=beta, bernoulli_p=p
+        avg_total_loss, avg_recon_loss, avg_kl_loss, avg_triplet_loss = train_one_epoch(
+            model, 
+            device, 
+            dataloader, 
+            optimizer, 
+            batch_size, 
+            epoch, 
+            writer=writer,
+            init_temperature=init_temperature, 
+            final_temperature=final_temperature, 
+            anneal_rate=anneal_rate,
+            num_steps_to_update=num_steps_to_update, 
+            alpha_triplet=alpha, 
+            margin=margin, 
+            beta_kl=beta, 
+            bernoulli_p=p
         )
         print(f"Epoch {epoch+1} --- Total Loss: {avg_total_loss:.4f} | Recon: {avg_recon_loss:.4f} | "
-              f"KL: {avg_kl_loss:.4f} | Contrastive: {avg_contrast_loss:.4f}")
+              f"KL: {avg_kl_loss:.4f} | triplet: {avg_triplet_loss:.4f}")
 
     model.eval()
     sample_input = next(iter(dataloader)).to(device)
-    writer.add_graph(model, sample_input[:, 0])
+    writer.add_graph(model, sample_input[:, 0]) 
 
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
     torch.save(model.state_dict(), save_path)
