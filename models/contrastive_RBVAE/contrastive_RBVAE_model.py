@@ -58,7 +58,7 @@ class ConvEncoder(nn.Module):
             nn.Flatten()
         )
         # 1 logit per latent variable since we want num_categories = 2
-        self.fc = nn.Linear(256*8*8*(8**2), latent_dim)
+        self.fc = nn.Linear(256*8*8*(4**2), latent_dim)
 
     def forward(self, x):
         # x: [B, C, H, W]
@@ -71,7 +71,7 @@ class ConvEncoder(nn.Module):
 class ConvDecoder(nn.Module):
     def __init__(self, out_channels=3, latent_dim=32):
         super().__init__()
-        self.fc = nn.Linear(latent_dim, 256*8*8*(8**2))
+        self.fc = nn.Linear(latent_dim, 256*8*8*(4**2))
         self.deconv = nn.Sequential(
             nn.ConvTranspose2d(256, 128, 4, 2, 1),
             nn.ReLU(),

@@ -71,8 +71,9 @@ def contrast_loss(x1, x2, label, margin: float=1.0):
     return loss
 
 # Callable image transform
+RESOLUTION = 256
 ImageTransforms = T.Compose([
-    T.Resize((512, 512)),
+    T.Resize((RESOLUTION, RESOLUTION)),
     T.ToTensor()
 ])
 
@@ -230,12 +231,14 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         recon_losses = []
         kl_losses = []
         h_seqs = []
+        bc_seqs = []
 
         for frame in frames:
             x_recon, h_seq, bc_seq = model(frame, temperature=temperature, hard=False)
             recon_losses.append(recon_loss(x_recon, frame))
             kl_losses.append(kl_binary_concrete(bc_seq, p=bernoulli_p))
-            h_seqs.append(h_seq)
+            # h_seqs.append(h_seq)
+            bc_seqs.append(bc_seq)
 
         recon_loss_val = sum(recon_losses) / len(recon_losses)
         kl_loss_val = sum(kl_losses) / len(kl_losses)
@@ -253,9 +256,9 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
         # Loop over states, excluding the last state since we need a "next" state for the negative sample.
         for state_index in range(num_states - 1):
             # Define the triplet:
-            anchor = h_seqs[0][:, state_index]    # From the first frame at current state
-            positive = h_seqs[1][:, state_index]    # From the second frame (same state)
-            negative = h_seqs[0][:, state_index + 1]  # From the first frame of the next state
+            anchor = bc_seqs[0][:, state_index]    # From the first frame at current state
+            positive = bc_seqs[1][:, state_index]    # From the second frame (same state)
+            negative = bc_seqs[0][:, state_index + 1]  # From the first frame of the next state
             triplet_loss_val += triplet_loss(anchor, positive, negative, margin=margin)
         triplet_loss_val /= float(num_states - 1)
         
@@ -313,19 +316,21 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     num_epochs = 30
-    max_iters = num_epochs * len(dataloader)
-    num_temp_updates = 150
+    max_iters = num_epochs * len(dataset) # NOTE: This should be based on the dataset NOT the dataloader
+    num_temp_updates = 550 
     num_steps_to_update = int(max_iters / num_temp_updates)
 
     init_temperature = 1.0 # Initial temperature for Gumbel-Softmax
     final_temperature = 0.5 # Minimum temperature after annealing
-    anneal_rate = 1e-4 # Annealing rate
-    beta = 0.1 # Coefficient for KL divergence
-    alpha = 0.1 # Coefficient for triplet loss
-    p = 0.5 # Bernoulli success probability
+    anneal_rate = 1e-3 # Annealing rate NOTE: should also be adjusted because it updates too slow rn
+    beta = 1 # Coefficient for KL divergence NOTE: This really needs to be higher, so give a generous range when tuning
+    alpha = 0.2 # Coefficient for triplet loss
+
+    p = 0.1 # Bernoulli success probability
+
     margin = 0.2 # Margin for triplet contrast loss
 
     writer = SummaryWriter(log_dir="./runs/rb_vae_experiment")
@@ -349,7 +354,7 @@ if __name__ == "__main__":
             bernoulli_p=p
         )
         print(f"Epoch {epoch+1} --- Total Loss: {avg_total_loss:.4f} | Recon: {avg_recon_loss:.4f} | "
-              f"KL: {avg_kl_loss:.4f} | triplet: {avg_triplet_loss:.4f}")
+              f"KL: {avg_kl_loss:.4f} | Triplet: {avg_triplet_loss:.4f}")
 
     model.eval()
     sample_input = next(iter(dataloader)).to(device)

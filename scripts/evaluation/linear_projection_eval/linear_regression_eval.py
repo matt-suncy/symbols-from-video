@@ -30,8 +30,9 @@ sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
 
 # This is a CALLABLE
+RESOLUTION = 256
 ImageTransforms = T.Compose([
-    T.Resize((512, 512)),
+    T.Resize((RESOLUTION, RESOLUTION)),
     T.ToTensor()
 ])
 
@@ -79,7 +80,7 @@ def main():
 
     # Load model
     model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/contrastive_RBVAE/saved_RBVAE"
+        "models/contrastive_RBVAE/saved_RBVAE_50_epochs"
         )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
@@ -103,7 +104,7 @@ def main():
         frame_expanded = frames[i][None, None, :, :, :].to(device)
         reconstruction, h_seq, bc_seq = rbvae_model(frame_expanded, temperature=0.5)
         save_tensor_as_image(reconstruction)
-        print(torch.count_nonzero(bc_seq))
+        # print(torch.count_nonzero(bc_seq))
         embeddings.append(torch.squeeze(h_seq))
     embeddings = torch.stack(embeddings, dim=0).to('cpu')
 
