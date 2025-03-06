@@ -26,11 +26,60 @@ def l1_loss(q_logits, lamb):
     # This should only be used if there is only 1 logit per latent variable
     return lamb * torch.norm(q_logits, p=1)
 
-
 def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
+def js_loss(p_log, q_log, log_target=True, reduction='batchmean'):
+    """
+    A helper that does:
+    0.5 * KL(p||m) + 0.5 * KL(q||m)
+    with p, q in log space if log_target=True.
+    """
+    # p_log, q_log shape: (..., K) where K is #categories
+    # m_log shape: same
+    # We'll use F.kl_div with log_target=True to interpret second arg as log-prob.
+    return 0.5 * (F.kl_div(m_log, p_log, log_target=True, reduction=reduction)
+        + F.kl_div(m_log, q_log, log_target=True, reduction=reduction))
 
+def js_distance_for_bernoulli(p, q, eps=1e-8):
+    """
+    p, q have shape (batch_size, latent_dim).
+    Each entry is the probability of "on" for a Bernoulli variable.
+    Returns a scalar that is the mean Jensen–Shannon *distance* across all dims in the batch.
+    """
+    # Clamps for safety :)
+    p = p.clamp(eps, 1 - eps)
+    q = q.clamp(eps, 1 - eps)
+
+    # Build 2-category distributions since we have variable that implicitly represents 1-p
+    # shape => (batch_size, latent_dim, 2)
+    p_2d = torch.stack([p, 1 - p], dim=-1)
+    q_2d = torch.stack([q, 1 - q], dim=-1)
+
+    # Convert to log
+    p_2d_log = p_2d.log()
+    q_2d_log = q_2d.log()
+
+    # Compute log(m) = log(0.5 * (p_2d + q_2d))
+    m_2d = 0.5 * (p_2d + q_2d)
+    m_2d_log = m_2d.log()
+
+    # Jensen–Shannon divergence, dimension by dimension, produce shape (batch_size, latent_dim)
+    # We'll do 'reduction="none"' so we can see the result per (batch, dim).
+    # (PyTorch usually expects the last dimension is categories)
+    kl_p_m = F.kl_div(m_2d_log, p_2d_log, log_target=True, reduction='none')
+    kl_q_m = F.kl_div(m_2d_log, q_2d_log, log_target=True, reduction='none')
+    js_div_per_dim = 0.5 * (kl_p_m + kl_q_m)  # shape (batch_size, latent_dim)
+
+    js_div_batch = js_div_per_dim.mean(dim=-1)  # average across latent_dim
+    js_div = js_div_batch.mean(dim=0)           # average across batch
+
+    # Turn divergence into distance
+    js_distance = torch.sqrt(js_div + 1e-12)
+
+    return js_distance
+
+# TODO: Change to triplet loss with a customizable distance measure, using p=2 norm here doesn't really make any sense
 def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True, 
     size_average=None, reduce=None, reduction='mean'):
 
@@ -45,18 +94,56 @@ def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True,
         size_average=size_average, 
         reduce=reduce, 
         reduction=reduction
-        )   
+        )
+
+
+def triplet_loss_js(anchor, positive, negative, margin=1.0, eps=1e-8, swap=False):
+    """
+    Triplet loss that uses the JS distance as the distance measure.
+    """
+    # Compute the JS distance between anchor & positive, anchor & negative
+    dist_ap = js_distance(anchor, positive, eps=eps, reduction='none')  # shape (batch, ...)
+    dist_an = js_distance(anchor, negative, eps=eps, reduction='none')  # shape (batch, ...)
+
+    if swap:
+        # Compute distance between positive and negative
+        dist_pn = js_distance(positive, negative, eps=eps, reduction='none')
+        # Use the smaller negative distance (anchor-negative or positive-negative)
+        dist_neg = torch.minimum(dist_an, dist_pn)
+    else:
+        dist_neg = dist_an
+
+    # Standard Triplet Loss: max(0, dist_ap - dist_an + margin)
+    loss = F.relu(dist_ap - dist_an + margin)
+
+    # Average over batch (and any other dims except the distribution dim)
+    return loss.mean()
 
 
 def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
     '''
-    Calculates the KL Divergence between input logits and a 
-    Bernoulli distribution.
+    Calculates the KL Divergence between the Bernoulli implied by q_logits 
+    (via Binary Concrete relaxation) and a fixed Bernoulli(p). 
+    Assumes q_logits has shape (..., latent_dim).
     '''
-    q = torch.sigmoid(q_logits)
-    kl = q * (torch.log(q + eps) - np.log(p)) + (1.0 - q) * (torch.log(1.0 - q + eps) - np.log(1.0 - p))
-    kl = kl.sum(dim=-1)   # Sum over latent dimensions
-    kl_mean = kl.mean()   # Average over the batch
+    # Convert logits to probabilities, clamp to avoid log(0).
+    q = torch.sigmoid(q_logits).clamp(eps, 1.0 - eps)
+
+    # Precompute log(p) and log(1 - p) for a scalar p
+    log_p = np.log(p)
+    log_1_minus_p = np.log(1.0 - p)
+
+    # Compute KL for each dimension:
+    # KL(Bernoulli(q) || Bernoulli(p)) = q * log(q/p) + (1-q) * log((1-q)/(1-p))
+    # Add eps inside the log for extra safety, because the latent variables were
+    # always at the extremes (0 or 1)
+    kl = q * (torch.log(q + eps) - log_p) \
+       + (1.0 - q) * (torch.log((1.0 - q) + eps) - log_1_minus_p)
+
+    # Sum over the latent dimension, then mean over the batch
+    kl = kl.sum(dim=-1)
+    kl_mean = kl.mean()
+
     return kl_mean
 
 
@@ -79,6 +166,7 @@ ImageTransforms = T.Compose([
 
 ### DATASETS ###
 
+# Legacy, still seems potentially useful who knows...
 class SampleStatePairDataset(Dataset):
     '''
     Args:
@@ -259,9 +347,10 @@ def train_one_epoch(model, device, dataloader, optimizer, batch_size, epoch, wri
             anchor = bc_seqs[0][:, state_index]    # From the first frame at current state
             positive = bc_seqs[1][:, state_index]    # From the second frame (same state)
             negative = bc_seqs[0][:, state_index + 1]  # From the first frame of the next state
-            triplet_loss_val += triplet_loss(anchor, positive, negative, margin=margin)
+            triplet_loss_val += triplet_loss_js(anchor, positive, negative, margin=margin, swap=True)
         triplet_loss_val /= float(num_states - 1)
         
+        # Calculated the total loss
         total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_triplet * triplet_loss_val
         
         optimizer.zero_grad()
@@ -310,7 +399,7 @@ if __name__ == "__main__":
         else:
             state_segments.append((0, flags[0] - grey_out + 1))
     
-    batch_size = 16
+    batch_size = 32
     dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
