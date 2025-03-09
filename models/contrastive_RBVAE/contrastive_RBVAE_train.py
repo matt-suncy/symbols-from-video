@@ -41,7 +41,7 @@ def js_loss(p_log, q_log, log_target=True, reduction='batchmean'):
     return 0.5 * (F.kl_div(m_log, p_log, log_target=True, reduction=reduction)
         + F.kl_div(m_log, q_log, log_target=True, reduction=reduction))
 
-def js_distance_for_bernoulli(p, q, eps=1e-8):
+def js_distance_for_bernoulli(p, q, eps=1e-8, reduction='none'):
     """
     p, q have shape (batch_size, latent_dim).
     Each entry is the probability of "on" for a Bernoulli variable.
@@ -67,8 +67,8 @@ def js_distance_for_bernoulli(p, q, eps=1e-8):
     # Jensen–Shannon divergence, dimension by dimension, produce shape (batch_size, latent_dim)
     # We'll do 'reduction="none"' so we can see the result per (batch, dim).
     # (PyTorch usually expects the last dimension is categories)
-    kl_p_m = F.kl_div(m_2d_log, p_2d_log, log_target=True, reduction='none')
-    kl_q_m = F.kl_div(m_2d_log, q_2d_log, log_target=True, reduction='none')
+    kl_p_m = F.kl_div(m_2d_log, p_2d_log, log_target=True, reduction=reduction)
+    kl_q_m = F.kl_div(m_2d_log, q_2d_log, log_target=True, reduction=reduction)
     js_div_per_dim = 0.5 * (kl_p_m + kl_q_m)  # shape (batch_size, latent_dim)
 
     js_div_batch = js_div_per_dim.mean(dim=-1)  # average across latent_dim
@@ -102,12 +102,12 @@ def triplet_loss_js(anchor, positive, negative, margin=1.0, eps=1e-8, swap=False
     Triplet loss that uses the JS distance as the distance measure.
     """
     # Compute the JS distance between anchor & positive, anchor & negative
-    dist_ap = js_distance(anchor, positive, eps=eps, reduction='none')  # shape (batch, ...)
-    dist_an = js_distance(anchor, negative, eps=eps, reduction='none')  # shape (batch, ...)
+    dist_ap = js_distance_for_bernoulli(anchor, positive, eps=eps, reduction='none')  # shape (batch, ...)
+    dist_an = js_distance_for_bernoulli(anchor, negative, eps=eps, reduction='none')  # shape (batch, ...)
 
     if swap:
         # Compute distance between positive and negative
-        dist_pn = js_distance(positive, negative, eps=eps, reduction='none')
+        dist_pn = js_distance_for_bernoulli(positive, negative, eps=eps, reduction='none')
         # Use the smaller negative distance (anchor-negative or positive-negative)
         dist_neg = torch.minimum(dist_an, dist_pn)
     else:
@@ -212,54 +212,167 @@ class SampleStatePairDataset(Dataset):
             image = self.transform(image)
         return image
 
+# TODO: rework this to include validation and test splits
+'''
+How exactly to do this though...?
+I'm thinking to just take a contiguous segment of X% of frames from each state
+'''
 
 class ShuffledStatePairDataset(Dataset):
-    '''
+    """
     Args:
-        frames_dir: Path to the directory containing the frames.
-        state_segments: List of tuples (start_idx, end_idx) determining state groupings.
-        transform: Transform to be applied on each frame.
-    '''
-    def __init__(self, frames_dir, state_segments, transform=None):
+        frames_dir:      Directory with frame images named like 0000000001.jpg
+        state_segments:  List of (start_idx, end_idx) for each state
+        test_pct:        Fraction of total frames (per state) to devote to test
+        val_pct:         Fraction of total frames (per state) to devote to val
+        transform:       Any image transform (e.g. torchvision transforms)
+        mode:            One of ["train", "test", "val"] – determines which subset
+                         of indices (train vs. test vs. val) is served by __getitem__.
+    """
+    def __init__(
+        self, 
+        frames_dir, 
+        state_segments, 
+        test_pct=0.1, 
+        val_pct=0.1, 
+        transform=None, 
+        mode="train"
+    ):
+        super().__init__()
         self.frames_dir = frames_dir
         self.state_segments = state_segments
         self.transform = transform
+        self.mode = mode.lower().strip()
         self.num_states = len(self.state_segments)
-        self.state_frame_indices = []
-        self.max_frames = 0
+
+        # Keep track of train/test/val indices for each state
+        self.train_indices_per_state = []
+        self.test_indices_per_state = []
+        self.val_indices_per_state = []
+
+        # For building your shuffled pairs, you may want to keep them
+        # separate so you only sample pairs from the relevant subset:
+        self.pairs_per_state = []
+
+        # Compute the contiguous splits for each state
         for (start, end) in self.state_segments:
-            indices = list(range(start, end))
-            self.state_frame_indices.append(indices)
-            self.max_frames = max(self.max_frames, len(indices))
-        self.state_pairs = []
-        for indices in self.state_frame_indices:
-            if len(indices) < self.max_frames:
-                padded = indices.copy() + random.choices(indices, k=self.max_frames - len(indices))
+            full_indices = list(range(start, end)) 
+            n = len(full_indices)
+            # Size of combined test+val chunk
+            test_val_count = int(n * (test_pct + val_pct))
+            # The offset from the start to that "middle" chunk
+            margin = (n - test_val_count) // 2
+
+            # Middle chunk that will be test+val
+            test_val_indices = full_indices[margin : margin + test_val_count]
+            
+            # The remaining frames (front chunk + back chunk) => train set
+            train_indices = (full_indices[:margin] 
+                             + full_indices[margin + test_val_count:])
+
+            # Now split test+val portion. For example, if you want them
+            # split proportionally to test_pct vs. val_pct:
+            if test_val_count > 0:
+                # fraction that is test out of that middle chunk
+                test_fraction_of_middle = test_pct / (test_pct + val_pct)
+                test_count = int(round(test_fraction_of_middle * test_val_count))
+                test_indices  = test_val_indices[:test_count]
+                val_indices   = test_val_indices[test_count:]
+            else:
+                # if there's no middle chunk at all, they are empty
+                test_indices = []
+                val_indices = []
+
+            self.train_indices_per_state.append(train_indices)
+            self.test_indices_per_state.append(test_indices)
+            self.val_indices_per_state.append(val_indices)
+
+        # At this point, we have the train/test/val indices for each state.
+        # If you want to shuffle/pad/draw pairs from only one subset (e.g. train),
+        # do that below by focusing on self.train_indices_per_state, etc.
+        self._build_pairs()
+
+    def _build_pairs(self):
+        """
+        Builds the pairs for each state, depending on which subset we're using
+        (train, test, or val). By default, we'll just build pairs for the
+        specified `self.mode`. If you want separate pair-lists for each split,
+        you can do that too.
+        """
+        if self.mode == "train":
+            all_state_indices = self.train_indices_per_state
+        elif self.mode == "test":
+            all_state_indices = self.test_indices_per_state
+        elif self.mode == "val":
+            all_state_indices = self.val_indices_per_state
+        else:
+            raise ValueError(f"Unknown mode={self.mode}")
+
+        self.pairs_per_state = []
+        self.num_items = 0
+
+        max_frames = 0
+        for indices in all_state_indices:
+            max_frames = max(max_frames, len(indices))
+
+        for indices in all_state_indices:
+            # If there are fewer frames than max_frames, pad them
+            if len(indices) < max_frames and len(indices) > 0:
+                padded = indices.copy() + random.choices(indices, k=max_frames - len(indices))
             else:
                 padded = indices.copy()
+
             random.shuffle(padded)
+            # Now form (frame1, frame2) pairs
             pairs = []
             for i in range(len(padded) // 2):
-                pairs.append((padded[2 * i], padded[2 * i + 1]))
+                pairs.append((padded[2*i], padded[2*i+1]))
+
             if len(padded) % 2 == 1:
                 leftover = padded[-1]
-                candidate = random.choice([x for x in indices if x != leftover]) if len(indices) > 1 else leftover
+                # pick any other index from 'indices' if possible
+                if len(indices) > 1:
+                    candidate = random.choice([x for x in indices if x != leftover])
+                else:
+                    candidate = leftover
                 pairs.append((leftover, candidate))
-            self.state_pairs.append(pairs)
-        self.num_items = self.max_frames // 2 if (self.max_frames % 2 == 0) else (self.max_frames + 1) // 2
+
+            self.pairs_per_state.append(pairs)
+
+        # The number of items is basically the number of pairs each state can supply
+        # They should all have the same number of pairs
+        max_pairs = max(len(pairs_list) for pairs_list in self.pairs_per_state)
+        self.num_items = max_pairs
 
     def __len__(self):
         return self.num_items
 
     def __getitem__(self, idx):
+        """
+        Collects the (idx)-th pair from each state's pair list, wraps them
+        into a single tensor. If a state's pair list is shorter than idx,
+        we wrap around mod the length (or handle however you prefer).
+        """
+        import torch
+
         pairs = []
-        for state_idx, pairs_list in enumerate(self.state_pairs):
-            pair_idx = idx % len(pairs_list)
-            pair = pairs_list[pair_idx]
+        for pairs_list in self.pairs_per_state:
+            if len(pairs_list) == 0:
+                # no pairs in this state for the chosen subset
+                # e.g. if the test/val subset was empty. Return a dummy?
+                # Or skip it. We'll just return a dummy.
+                dummy = torch.zeros(2, 3, 64, 64)  # adjust shape as needed
+                pairs.append(dummy)
+                continue
+
+            real_pair_idx = idx % len(pairs_list)
+            pair = pairs_list[real_pair_idx]
             frame1 = self._load_frame(pair[0])
             frame2 = self._load_frame(pair[1])
             pairs.append(torch.stack([frame1, frame2], dim=0))  # [2, C, H, W]
-        pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)  # [2, T, C, H, W]
+
+        # Combine [state_1, state_2, ...] => [2, T, C, H, W]
+        pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)
         return pairs_tensor
 
     def _load_frame(self, frame_index):
@@ -269,6 +382,66 @@ class ShuffledStatePairDataset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
         return image
+        
+# class ShuffledStatePairDataset(Dataset):
+#     '''
+#     Args:
+#         frames_dir: Path to the directory containing the frames.
+#         state_segments: List of tuples (start_idx, end_idx) determining state groupings.
+#         transform: Transform to be applied on each frame.
+#     '''
+#     def __init__(self, frames_dir, state_segments, transform=None):
+#         self.frames_dir = frames_dir
+#         self.state_segments = state_segments
+#         self.transform = transform
+#         self.num_states = len(self.state_segments)
+
+#         self.state_frame_indices = []
+
+#         self.max_frames = 0
+#         for (start, end) in self.state_segments:
+#             indices = list(range(start, end))
+#             self.state_frame_indices.append(indices)
+#             self.max_frames = max(self.max_frames, len(indices))
+
+#         self.state_pairs = []
+#         for indices in self.state_frame_indices:
+#             if len(indices) < self.max_frames:
+#                 padded = indices.copy() + random.choices(indices, k=self.max_frames - len(indices))
+#             else:
+#                 padded = indices.copy()
+#             random.shuffle(padded)
+#             pairs = []
+#             for i in range(len(padded) // 2):
+#                 pairs.append((padded[2 * i], padded[2 * i + 1]))
+#             if len(padded) % 2 == 1:
+#                 leftover = padded[-1]
+#                 candidate = random.choice([x for x in indices if x != leftover]) if len(indices) > 1 else leftover
+#                 pairs.append((leftover, candidate))
+#             self.state_pairs.append(pairs)
+#         self.num_items = self.max_frames // 2 if (self.max_frames % 2 == 0) else (self.max_frames + 1) // 2
+
+#     def __len__(self):
+#         return self.num_items
+
+#     def __getitem__(self, idx):
+#         pairs = []
+#         for state_idx, pairs_list in enumerate(self.state_pairs):
+#             pair_idx = idx % len(pairs_list)
+#             pair = pairs_list[pair_idx]
+#             frame1 = self._load_frame(pair[0])
+#             frame2 = self._load_frame(pair[1])
+#             pairs.append(torch.stack([frame1, frame2], dim=0))  # [2, C, H, W]
+#         pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)  # [2, T, C, H, W]
+#         return pairs_tensor
+
+#     def _load_frame(self, frame_index):
+#         filename = f"{frame_index:010d}.jpg"
+#         path = os.path.join(self.frames_dir, filename)
+#         image = Image.open(path).convert("RGB")
+#         if self.transform is not None:
+#             image = self.transform(image)
+#         return image
 
 ### TRAINING LOOP ###
 
@@ -390,7 +563,7 @@ if __name__ == "__main__":
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
     grey_out = 10
-    state_segments = []
+    state_segments = [] # Will be a list of tuples indicating (start, end)
     for i in range(len(flags)):
         if i > 0:
             state_segments.append((flags[i-1] + grey_out, flags[i] - grey_out + 1))
@@ -400,7 +573,7 @@ if __name__ == "__main__":
             state_segments.append((0, flags[0] - grey_out + 1))
     
     batch_size = 32
-    dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
+    dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="train")
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
