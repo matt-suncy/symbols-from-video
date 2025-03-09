@@ -171,6 +171,11 @@ if __name__ == "__main__":
         percentage = np.sum(label_vectors == most_common_vector) / len(label_vectors)
         print(f"Percentage of frames that match the most common latent state for class {label}: {percentage}")
         percentages.append(percentage)
+
+    # Calculate the weighted average of the matching percentages
+    weighted_average = np.sum(percentages * np.array(flags)) / np.sum(flags)
+    print(f"Weighted average of the matching percentages: {weighted_average}")
+
     # Plot the percentage of frames that match the most common latent state for each class
     plt.plot(range(len(flags)), percentages)
     plt.xlabel("Class")
