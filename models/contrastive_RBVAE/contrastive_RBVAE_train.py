@@ -353,17 +353,11 @@ class ShuffledStatePairDataset(Dataset):
         into a single tensor. If a state's pair list is shorter than idx,
         we wrap around mod the length (or handle however you prefer).
         """
-        import torch
 
         pairs = []
         for pairs_list in self.pairs_per_state:
             if len(pairs_list) == 0:
-                # no pairs in this state for the chosen subset
-                # e.g. if the test/val subset was empty. Return a dummy?
-                # Or skip it. We'll just return a dummy.
-                dummy = torch.zeros(2, 3, 64, 64)  # adjust shape as needed
-                pairs.append(dummy)
-                continue
+                raise ValueError(f"State {idx} has no pairs")
 
             real_pair_idx = idx % len(pairs_list)
             pair = pairs_list[real_pair_idx]
