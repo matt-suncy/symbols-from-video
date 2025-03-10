@@ -29,56 +29,6 @@ def l1_loss(q_logits, lamb):
 def recon_loss(x_recon, x):
     return F.mse_loss(x_recon, x)
 
-def js_loss(p_log, q_log, log_target=True, reduction='batchmean'):
-    """
-    A helper that does:
-    0.5 * KL(p||m) + 0.5 * KL(q||m)
-    with p, q in log space if log_target=True.
-    """
-    # p_log, q_log shape: (..., K) where K is #categories
-    # m_log shape: same
-    # We'll use F.kl_div with log_target=True to interpret second arg as log-prob.
-    return 0.5 * (F.kl_div(m_log, p_log, log_target=True, reduction=reduction)
-        + F.kl_div(m_log, q_log, log_target=True, reduction=reduction))
-
-def js_distance_for_bernoulli(p, q, eps=1e-8, reduction='none'):
-    """
-    p, q have shape (batch_size, latent_dim).
-    Each entry is the probability of "on" for a Bernoulli variable.
-    Returns a scalar that is the mean Jensen–Shannon *distance* across all dims in the batch.
-    """
-    # Clamps for safety :)
-    p = p.clamp(eps, 1 - eps)
-    q = q.clamp(eps, 1 - eps)
-
-    # Build 2-category distributions since we have variable that implicitly represents 1-p
-    # shape => (batch_size, latent_dim, 2)
-    p_2d = torch.stack([p, 1 - p], dim=-1)
-    q_2d = torch.stack([q, 1 - q], dim=-1)
-
-    # Convert to log
-    p_2d_log = p_2d.log()
-    q_2d_log = q_2d.log()
-
-    # Compute log(m) = log(0.5 * (p_2d + q_2d))
-    m_2d = 0.5 * (p_2d + q_2d)
-    m_2d_log = m_2d.log()
-
-    # Jensen–Shannon divergence, dimension by dimension, produce shape (batch_size, latent_dim)
-    # We'll do 'reduction="none"' so we can see the result per (batch, dim).
-    # (PyTorch usually expects the last dimension is categories)
-    kl_p_m = F.kl_div(m_2d_log, p_2d_log, log_target=True, reduction=reduction)
-    kl_q_m = F.kl_div(m_2d_log, q_2d_log, log_target=True, reduction=reduction)
-    js_div_per_dim = 0.5 * (kl_p_m + kl_q_m)  # shape (batch_size, latent_dim)
-
-    js_div_batch = js_div_per_dim.mean(dim=-1)  # average across latent_dim
-    js_div = js_div_batch.mean(dim=0)           # average across batch
-
-    # Turn divergence into distance
-    js_distance = torch.sqrt(js_div + 1e-12)
-
-    return js_distance
-
 def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True, 
     size_average=None, reduce=None, reduction='mean'):
 
@@ -94,29 +44,6 @@ def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True,
         reduce=reduce, 
         reduction=reduction
         )
-
-
-def triplet_loss_js(anchor, positive, negative, margin=1.0, eps=1e-8, swap=False):
-    """
-    Triplet loss that uses the JS distance as the distance measure.
-    """
-    # Compute the JS distance between anchor & positive, anchor & negative
-    dist_ap = js_distance_for_bernoulli(anchor, positive, eps=eps, reduction='none')  # shape (batch, ...)
-    dist_an = js_distance_for_bernoulli(anchor, negative, eps=eps, reduction='none')  # shape (batch, ...)
-
-    if swap:
-        # Compute distance between positive and negative
-        dist_pn = js_distance_for_bernoulli(positive, negative, eps=eps, reduction='none')
-        # Use the smaller negative distance (anchor-negative or positive-negative)
-        dist_neg = torch.minimum(dist_an, dist_pn)
-    else:
-        dist_neg = dist_an
-
-    # Standard Triplet Loss: max(0, dist_ap - dist_an + margin)
-    loss = F.relu(dist_ap - dist_an + margin)
-
-    # Average over batch (and any other dims except the distribution dim)
-    return loss.mean()
 
 
 def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
@@ -146,18 +73,18 @@ def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
     return kl_mean
 
 
-def contrast_loss(x1, x2, label, margin: float=1.0):
+def contrast_loss(x1, x2, label, margin: float=1.0, dist='euclidean'):
     """
     Computes Contrastive Loss using cosine distance. Requires an input label to determine difference
     between classes (0 for similar, 1 for dissimilar).
     """
     # Cosine similarity is between -1 and 1, so cosine distance is between 0 and 2
-    cos_sim = F.cosine_similarity(x1, x2)
-    dist = 1 - cos_sim  # Convert similarity to distance (0 to 2 range)
-    
-    loss = (1 - label) * torch.pow(dist, 2) + label * torch.pow(torch.clamp(margin - dist, min=0.0), 2)
-    loss = torch.mean(loss)
-    return loss
+    if dist == 'cosine':
+        cos_sim = F.cosine_similarity(x1, x2)
+        dist = 1 - cos_sim  # Convert similarity to distance (0 to 2 range)
+
+    elif dist == 'euclidean':
+        dist = F.pairwise_distance(x1, x2)
 
 # Callable image transform
 RESOLUTION = 256
