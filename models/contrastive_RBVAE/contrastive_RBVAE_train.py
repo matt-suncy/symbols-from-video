@@ -515,6 +515,12 @@ class ContrastiveRBVAETrainer:
         
         num_batches = len(self.val_dataloader)
         
+        # Calculate normalization coefficients
+        coeff_sum = 1.0 + self.beta_kl + self.alpha_contrast
+        recon_coeff = 1.0 / coeff_sum
+        kl_coeff = self.beta_kl / coeff_sum  
+        contrast_coeff = self.alpha_contrast / coeff_sum
+
         with torch.no_grad():
             for item in self.val_dataloader:
                 num_batches_item, _, num_states, _, _, _ = item.size()
@@ -549,10 +555,11 @@ class ContrastiveRBVAETrainer:
                 
                 contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
                 
+                # Use normalized coefficients for total loss
                 total_loss_val = (
-                    recon_loss_val +
-                    self.beta_kl * kl_loss_val +
-                    self.alpha_contrast * contrast_loss_val
+                    recon_coeff * recon_loss_val +
+                    kl_coeff * kl_loss_val +
+                    contrast_coeff * contrast_loss_val
                 )
                 
                 total_loss += total_loss_val.item()
