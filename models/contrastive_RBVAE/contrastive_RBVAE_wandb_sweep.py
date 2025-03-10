@@ -6,82 +6,13 @@ import torch.optim as optim
 from pathlib import Path
 import argparse
 import os
-import torch.nn.functional as F
 
-# Import the model and training utilities
-from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
-from models.contrastive_RBVAE.contrastive_RBVAE_train import (
-    train_one_epoch, 
-    ShuffledStatePairDataset, 
+from contrastive_RBVAE_model import Seq2SeqBinaryVAE
+from contrastive_RBVAE_train import (
+    ContrastiveRBVAETrainer,
+    ShuffledStatePairDataset,
     ImageTransforms
 )
-
-def evaluate_model(model, device, dataloader, batch_size, epoch, 
-                  init_temperature=1.0, bernoulli_p=0.5, margin=1.0, 
-                  alpha_triplet=0.1, beta_kl=0.1):
-    """
-    Evaluates the model on validation data and returns losses.
-    Args are the same as train_one_epoch() but without optimizer and annealing params.
-    """
-    model.eval()
-    total_loss = 0.0
-    total_recon_loss = 0.0
-    total_kl_loss = 0.0
-    total_triplet_loss = 0.0
-    
-    num_batches = len(dataloader)
-    temperature = init_temperature  # Use constant temperature for evaluation
-    
-    with torch.no_grad():
-        for batch_idx, item in enumerate(dataloader):
-            # item shape: [B, 2, T, C, H, W]
-            num_batches_item, _, num_states, _, _, _ = item.size()
-            item = item.to(device)
-            frames = [item[:, i] for i in range(2)]
-            recon_losses = []
-            kl_losses = []
-            bc_seqs = []
-
-            for frame in frames:
-                x_recon, h_seq, bc_seq = model(frame, temperature=temperature, hard=False)
-                recon_losses.append(F.mse_loss(x_recon, frame))  # Use MSE directly for validation
-                kl_losses.append(torch.mean(torch.sum(bc_seq * torch.log(bc_seq / bernoulli_p + 1e-8) + 
-                                        (1 - bc_seq) * torch.log((1 - bc_seq) / (1 - bernoulli_p) + 1e-8), dim=-1)))
-                bc_seqs.append(bc_seq)
-
-            recon_loss_val = sum(recon_losses) / len(recon_losses)
-            kl_loss_val = sum(kl_losses) / len(kl_losses)
-            
-            triplet_loss_val = 0
-            # Loop over states, excluding the last state
-            for state_index in range(num_states - 1):
-                # Define the triplet:
-                anchor = bc_seqs[0][:, state_index]    # From the first frame at current state
-                positive = bc_seqs[1][:, state_index]    # From the second frame (same state)
-                negative = bc_seqs[0][:, state_index + 1]  # From the first frame of the next state
-                
-                # Compute distances
-                dist_ap = torch.sqrt(torch.sum((anchor - positive)**2, dim=1))
-                dist_an = torch.sqrt(torch.sum((anchor - negative)**2, dim=1))
-                triplet_loss_batch = torch.clamp(dist_ap - dist_an + margin, min=0.0)
-                triplet_loss_val += triplet_loss_batch.mean()
-                
-            triplet_loss_val /= float(num_states - 1)
-            
-            # Calculate the total loss
-            total_loss_val = recon_loss_val + beta_kl * kl_loss_val + alpha_triplet * triplet_loss_val
-            
-            total_loss += total_loss_val.item()
-            total_recon_loss += recon_loss_val.item()
-            total_kl_loss += kl_loss_val.item()
-            total_triplet_loss += triplet_loss_val.item()
-    
-    avg_total_loss = total_loss / num_batches
-    avg_recon_loss = total_recon_loss / num_batches
-    avg_kl_loss = total_kl_loss / num_batches
-    avg_triplet_loss = total_triplet_loss / num_batches
-    
-    return avg_total_loss, avg_recon_loss, avg_kl_loss, avg_triplet_loss
 
 def train_with_config():
     """
@@ -89,9 +20,6 @@ def train_with_config():
     """
     # Access the config values provided by W&B
     config = wandb.config
-    
-    # Set up the device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Set up paths and state segmentation
     frames_dir = Path(config.frames_dir)
@@ -109,104 +37,95 @@ def train_with_config():
         else:
             state_segments.append((0, flags[0] - grey_out + 1))
     
-    # Initialize the model with hyperparameters from config
+    # Setup datasets and dataloaders
+    train_dataset = ShuffledStatePairDataset(
+        frames_dir, 
+        state_segments, 
+        transform=ImageTransforms, 
+        mode="train"
+    )
+    val_dataset = ShuffledStatePairDataset(
+        frames_dir, 
+        state_segments, 
+        transform=ImageTransforms, 
+        mode="val"
+    )
+    train_dataloader = DataLoader(
+        train_dataset, 
+        batch_size=config.batch_size, 
+        shuffle=True
+    )
+    val_dataloader = DataLoader(
+        val_dataset, 
+        batch_size=config.batch_size, 
+        shuffle=False
+    )
+    
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Initialize model with config hyperparameters
     model = Seq2SeqBinaryVAE(
-        in_channels=3, 
-        out_channels=3, 
-        latent_dim=config.latent_dim, 
+        in_channels=3,
+        out_channels=3,
+        latent_dim=config.latent_dim,
         hidden_dim=config.latent_dim
     ).to(device)
     
-    # Initialize the optimizer
+    # Initialize optimizer
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     
-    # Setup dataset and dataloader
-    dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
-
-    # Set up validation dataset and dataloader
-    val_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="val")
-    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True)
-
-    # Logic for determining num_steps_to_update
-    max_iters = config.num_epochs * len(dataset)
-    num_temp_updates = config.num_temp_updates
-    num_steps_to_update = int(max_iters / num_temp_updates)
+    # Calculate num_steps_to_update based on config
+    max_iters = config.num_epochs * len(train_dataset)
+    num_steps_to_update = int(max_iters / config.num_temp_updates)
     
-    # Training loop
-    best_val_loss = float('inf')
+    # Create unique log directory for this run
+    log_dir = Path("./runs") / wandb.run.name
     
-    for epoch in range(config.num_epochs):
-        # Train for one epoch
-        avg_total_loss, avg_recon_loss, avg_kl_loss, avg_triplet_loss = train_one_epoch(
-            model=model,
-            device=device,
-            dataloader=dataloader,
-            optimizer=optimizer,
-            batch_size=config.batch_size,
-            epoch=epoch,
-            init_temperature=config.init_temperature,
-            final_temperature=config.final_temperature,
-            anneal_rate=config.anneal_rate,
-            num_steps_to_update=num_steps_to_update, # This calculated from the config
-            bernoulli_p=config.bernoulli_p,
-            margin=config.margin,
-            alpha_triplet=config.alpha_triplet,
-            beta_kl=config.beta_kl
-        )
-        
-        # Evaluate on validation set
-        val_total_loss, val_recon_loss, val_kl_loss, val_triplet_loss = evaluate_model(
-            model=model,
-            device=device,
-            dataloader=val_dataloader,
-            batch_size=config.batch_size,
-            epoch=epoch,
-            init_temperature=config.init_temperature,
-            bernoulli_p=config.bernoulli_p,
-            margin=config.margin,
-            alpha_triplet=config.alpha_triplet,
-            beta_kl=config.beta_kl
-        )
-        
-        # Log metrics to W&B
-        wandb.log({
-            "epoch": epoch,
-            "train/total_loss": avg_total_loss,
-            "train/reconstruction_loss": avg_recon_loss,
-            "train/kl_divergence": avg_kl_loss,
-            "train/triplet_loss": avg_triplet_loss,
-            "val/total_loss": val_total_loss,
-            "val/reconstruction_loss": val_recon_loss,
-            "val/kl_divergence": val_kl_loss,
-            "val/triplet_loss": val_triplet_loss
-        })
-        
-        # Save the best model based on validation loss
-        if val_total_loss < best_val_loss:
-            best_val_loss = val_total_loss
-            # Save model checkpoint
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': avg_total_loss,
-                'val_loss': best_val_loss,
-            }, os.path.join(wandb.run.dir, 'best_model.pt'))
-            wandb.save('best_model.pt')
-            
-            # Log the best epoch
-            wandb.run.summary['best_epoch'] = epoch
+    # Initialize trainer with config hyperparameters
+    trainer = ContrastiveRBVAETrainer(
+        model=model,
+        device=device,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        optimizer=optimizer,
+        init_temperature=config.init_temperature,
+        final_temperature=config.final_temperature,
+        anneal_rate=config.anneal_rate,
+        num_steps_to_update=num_steps_to_update,
+        bernoulli_p=config.bernoulli_p,
+        margin=config.margin,
+        alpha_triplet=config.alpha_triplet,
+        beta_kl=config.beta_kl,
+        log_dir=log_dir
+    )
     
-    # Return the best validation loss as the metric to optimize
-    return best_val_loss
+    # Train the model and get history
+    save_path = Path("./models") / f"model_{wandb.run.name}.pt"
+    history = trainer.train(num_epochs=config.num_epochs, save_path=save_path)
+    
+    # Log final metrics to wandb
+    wandb.log({
+        "best_val_loss": history["best_val_loss"],
+        "best_epoch": history["best_epoch"]
+    })
+    
+    # Save the best model to wandb
+    if trainer.best_model_state is not None:
+        best_model_path = Path("./models") / f"best_model_{wandb.run.name}.pt"
+        torch.save({
+            'model_state_dict': trainer.best_model_state,
+            'config': dict(config),
+            'best_epoch': history["best_epoch"],
+            'best_val_loss': history["best_val_loss"]
+        }, best_model_path)
+        wandb.save(str(best_model_path))
+    
+    return history["best_val_loss"]
 
 def train_with_wandb():
     """Wrapper function to initialize wandb run and call the training function"""
-    # Train the model and get the best validation loss
     best_val_loss = train_with_config()
-    
-    # Log final metrics
     wandb.run.summary['best_val_loss'] = best_val_loss
 
 def main():
@@ -219,9 +138,9 @@ def main():
     
     # Define the sweep configuration
     sweep_config = {
-        'method': 'bayes',  # Can be 'random', 'grid', or 'bayes'
+        'method': 'bayes',
         'metric': {
-            'name': 'val/total_loss',  # Updated to use validation loss
+            'name': 'best_val_loss',
             'goal': 'minimize'
         },
         'parameters': {
@@ -252,7 +171,7 @@ def main():
                 'max': 1e-3
             },
             'num_temp_updates': {
-                'distribution': 'uniform',
+                'distribution': 'int_uniform',
                 'min': 550,
                 'max': 1100
             },
@@ -279,8 +198,7 @@ def main():
             'num_epochs': {
                 'value': 30
             },
-
-            # Fixed parameters - these aren't part of the sweep but are needed for training
+            # Fixed parameters
             'frames_dir': {
                 'value': str(Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4"))
             },
