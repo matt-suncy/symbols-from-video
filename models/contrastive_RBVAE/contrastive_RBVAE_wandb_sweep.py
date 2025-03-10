@@ -95,7 +95,7 @@ def train_with_config():
         num_steps_to_update=num_steps_to_update,
         bernoulli_p=config.bernoulli_p,
         margin=config.margin,
-        alpha_triplet=config.alpha_triplet,
+        alpha_contrast=config.alpha_contrast,
         beta_kl=config.beta_kl,
         log_dir=log_dir
     )
@@ -150,10 +150,10 @@ def main():
                 'max': 1e-2
             },
             'batch_size': {
-                'values': [16, 32, 64, 128]
+                'values': [16, 32, 64]
             },
             'latent_dim': {
-                'values': [16, 32, 64, 128]
+                'values': [16, 32, 64]
             },
             'init_temperature': {
                 'distribution': 'uniform',
@@ -163,12 +163,12 @@ def main():
             'final_temperature': {
                 'distribution': 'uniform',
                 'min': 0.1,
-                'max': 0.7
+                'max': 0.5
             },
             'anneal_rate': {
                 'distribution': 'log_uniform_values',
-                'min': 1e-6,
-                'max': 1e-3
+                'min': 1e-5,
+                'max': 1e-2
             },
             'num_temp_updates': {
                 'distribution': 'int_uniform',
@@ -176,27 +176,25 @@ def main():
                 'max': 1100
             },
             'bernoulli_p': {
-                'distribution': 'uniform',
-                'min': 0.3,
-                'max': 0.7
+                'values': [0.1, 0.5]
             },
             'margin': {
                 'distribution': 'uniform',
                 'min': 0.1,
-                'max': 2.0
-            },
-            'alpha_triplet': {
-                'distribution': 'uniform',
-                'min': 0.01,
                 'max': 1.0
+            },
+            'alpha_contrast': {
+                'distribution': 'uniform',
+                'min': 0.5,
+                'max': 5
             },
             'beta_kl': {
                 'distribution': 'uniform',
-                'min': 0.01,
-                'max': 1.0
+                'min': 0.5,
+                'max': 5
             },
             'num_epochs': {
-                'value': 30
+                'value': 100
             },
             # Fixed parameters
             'frames_dir': {
