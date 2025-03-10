@@ -86,6 +86,8 @@ def contrast_loss(x1, x2, label, margin: float=1.0, dist='euclidean'):
     elif dist == 'euclidean':
         dist = F.pairwise_distance(x1, x2)
 
+    return 
+
 # Callable image transform
 RESOLUTION = 256
 ImageTransforms = T.Compose([
