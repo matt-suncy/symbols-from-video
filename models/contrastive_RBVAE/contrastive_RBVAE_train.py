@@ -75,8 +75,17 @@ def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
 
 def contrast_loss(x1, x2, label, margin: float=1.0, dist='euclidean'):
     """
-    Computes Contrastive Loss using cosine distance. Requires an input label to determine difference
+    Computes Contrastive Loss using cosine or euclidean distance. Requires an input label to determine difference
     between classes (0 for similar, 1 for dissimilar).
+    
+    Args:
+        x1: First input tensor
+        x2: Second input tensor 
+        label: Binary label (0 for similar pairs, 1 for dissimilar pairs)
+        margin: Margin for dissimilar pairs (default: 1.0)
+        dist: Distance metric to use ('cosine' or 'euclidean')
+    Returns:
+        Contrastive loss value
     """
     # Cosine similarity is between -1 and 1, so cosine distance is between 0 and 2
     if dist == 'cosine':
@@ -86,7 +95,13 @@ def contrast_loss(x1, x2, label, margin: float=1.0, dist='euclidean'):
     elif dist == 'euclidean':
         dist = F.pairwise_distance(x1, x2)
 
-    return 
+    # For similar pairs (label=0), we want to minimize the distance
+    # For dissimilar pairs (label=1), we want distance > margin
+    similar_loss = (1 - label) * torch.pow(dist, 2)
+    dissimilar_loss = label * torch.pow(torch.clamp(margin - dist, min=0.0), 2)
+    
+    loss = similar_loss + dissimilar_loss
+    return loss.mean()
 
 # Callable image transform
 RESOLUTION = 256
