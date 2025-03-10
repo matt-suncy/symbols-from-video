@@ -79,7 +79,6 @@ def js_distance_for_bernoulli(p, q, eps=1e-8, reduction='none'):
 
     return js_distance
 
-# TODO: Change to triplet loss with a customizable distance measure, using p=2 norm here doesn't really make any sense
 def triplet_loss(anchor, pos, neg, margin=1.0, p=2.0, eps=1e-08, swap=True, 
     size_average=None, reduce=None, reduction='mean'):
 
@@ -448,25 +447,24 @@ class ContrastiveRBVAETrainer:
             recon_losses = []
             kl_losses = []
             bc_seqs = []
+            h_seqs = []
             
             for frame in frames:
                 x_recon, h_seq, bc_seq = self.model(frame, temperature=temperature, hard=False)
                 recon_losses.append(recon_loss(x_recon, frame))
                 kl_losses.append(kl_binary_concrete(bc_seq, p=self.bernoulli_p))
-                bc_seqs.append(bc_seq)
+                h_seqs.append(h_seq)
             
             recon_loss_val = sum(recon_losses) / len(recon_losses)
             kl_loss_val = sum(kl_losses) / len(kl_losses)
             
             triplet_loss_val = 0
             for state_index in range(num_states - 1):
-                anchor = bc_seqs[0][:, state_index]
-                positive = bc_seqs[1][:, state_index]
-                negative = bc_seqs[0][:, state_index + 1]
-                triplet_loss_val += triplet_loss_js(
-                    anchor, positive, negative,
-                    margin=self.margin, swap=True
-                )
+                anchor = h_seqs[0][:, state_index]
+                positive = h_seqs[1][:, state_index]
+                negative = h_seqs[0][:, state_index + 1]
+                triplet_loss_val += triplet_loss(anchor, positive, negative, 
+                    margin=self.margin, p=2.0, swap=True)
             triplet_loss_val /= float(num_states - 1)
             
             total_loss_val = (
@@ -520,6 +518,7 @@ class ContrastiveRBVAETrainer:
                 recon_losses = []
                 kl_losses = []
                 bc_seqs = []
+                h_seqs = []
                 
                 for frame in frames:
                     x_recon, h_seq, bc_seq = self.model(
@@ -529,20 +528,18 @@ class ContrastiveRBVAETrainer:
                     )
                     recon_losses.append(recon_loss(x_recon, frame))
                     kl_losses.append(kl_binary_concrete(bc_seq, p=self.bernoulli_p))
-                    bc_seqs.append(bc_seq)
+                    h_seqs.append(h_seq)
                 
                 recon_loss_val = sum(recon_losses) / len(recon_losses)
                 kl_loss_val = sum(kl_losses) / len(kl_losses)
                 
                 triplet_loss_val = 0
                 for state_index in range(num_states - 1):
-                    anchor = bc_seqs[0][:, state_index]
-                    positive = bc_seqs[1][:, state_index]
-                    negative = bc_seqs[0][:, state_index + 1]
-                    triplet_loss_val += triplet_loss_js(
-                        anchor, positive, negative,
-                        margin=self.margin, swap=True
-                    )
+                    anchor = h_seqs[0][:, state_index]
+                    positive = h_seqs[1][:, state_index]
+                    negative = h_seqs[0][:, state_index + 1]
+                    triplet_loss_val += triplet_loss(anchor, positive, negative, 
+                        margin=self.margin, p=2.0, swap=True)
                 triplet_loss_val /= float(num_states - 1)
                 
                 total_loss_val = (
@@ -654,7 +651,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    
+    num_epochs = 50
+
     # Create trainer
     trainer = ContrastiveRBVAETrainer(
         model=model,
@@ -665,17 +663,17 @@ if __name__ == "__main__":
         init_temperature=1.0,
         final_temperature=0.5,
         anneal_rate=1e-3,
-        num_steps_to_update=int((30 * len(train_dataset)) / 550),
+        num_steps_to_update=int((num_epochs * len(train_dataset)) / 750),
         bernoulli_p=0.1,
         margin=0.2,
-        alpha_triplet=0.2,
+        alpha_triplet=1.0,
         beta_kl=1.0,
         log_dir="./runs/rb_vae_experiment"
     )
     
     # Train the model
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
-    history = trainer.train(num_epochs=30, save_path=save_path)
+    history = trainer.train(num_epochs=num_epochs, save_path=save_path)
     
     print(f"Best validation loss: {history['best_val_loss']:.4f} at epoch {history['best_epoch']}")
     print("Run 'tensorboard --logdir=runs' to visualize the training progress.")
