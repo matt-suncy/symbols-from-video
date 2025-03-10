@@ -391,7 +391,7 @@ class ContrastiveRBVAETrainer:
         num_steps_to_update=100,
         bernoulli_p=0.5,
         margin=1.0,
-        alpha_triplet=0.1,
+        alpha_contrast=0.1,
         beta_kl=0.1,
         log_dir=None
     ):
@@ -408,7 +408,7 @@ class ContrastiveRBVAETrainer:
         self.num_steps_to_update = num_steps_to_update
         self.bernoulli_p = bernoulli_p
         self.margin = margin
-        self.alpha_triplet = alpha_triplet
+        self.alpha_contrast = alpha_contrast
         self.beta_kl = beta_kl
         
         # Initialize tensorboard writer if log_dir is provided
@@ -424,7 +424,7 @@ class ContrastiveRBVAETrainer:
         total_loss = 0.0
         total_recon_loss = 0.0
         total_kl_loss = 0.0
-        total_triplet_loss = 0.0
+        total_contrast_loss = 0.0
         
         num_batches = len(self.train_dataloader)
         temperature = self.init_temperature
@@ -458,19 +458,21 @@ class ContrastiveRBVAETrainer:
             recon_loss_val = sum(recon_losses) / len(recon_losses)
             kl_loss_val = sum(kl_losses) / len(kl_losses)
             
-            triplet_loss_val = 0
+            contrast_loss_similar = contrast_loss(h_seqs[0], h_seqs[1], label=0)
+        
+            contrast_loss_dissim = 0
             for state_index in range(num_states - 1):
-                anchor = h_seqs[0][:, state_index]
-                positive = h_seqs[1][:, state_index]
-                negative = h_seqs[0][:, state_index + 1]
-                triplet_loss_val += triplet_loss(anchor, positive, negative, 
-                    margin=self.margin, p=2.0, swap=True)
-            triplet_loss_val /= float(num_states - 1)
+                dissim_z_a = h_seqs[0][:, state_index]
+                dissim_z_b = h_seqs[0][:, state_index + 1]
+                contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
+            contrast_loss_dissim /= float(num_states - 1)
+            
+            contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
             
             total_loss_val = (
                 recon_loss_val +
                 self.beta_kl * kl_loss_val +
-                self.alpha_triplet * triplet_loss_val
+                self.alpha_contrast * contrast_loss_val
             )
             
             self.optimizer.zero_grad()
@@ -481,21 +483,21 @@ class ContrastiveRBVAETrainer:
             total_loss += total_loss_val.item()
             total_recon_loss += recon_loss_val.item()
             total_kl_loss += kl_loss_val.item()
-            total_triplet_loss += triplet_loss_val.item()
+            total_contrast_loss += contrast_loss_val.item()
             
             # Log batch metrics
             if self.writer:
                 self.writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), global_step)
                 self.writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), global_step)
                 self.writer.add_scalar('Batch/KL_Divergence', kl_loss_val.item(), global_step)
-                self.writer.add_scalar('Batch/Triplet_Loss', triplet_loss_val.item(), global_step)
+                self.writer.add_scalar('Batch/Contrast_Loss', contrast_loss_val.item(), global_step)
         
         # Calculate average losses
         avg_losses = {
             'total_loss': total_loss / num_batches,
             'recon_loss': total_recon_loss / num_batches,
             'kl_loss': total_kl_loss / num_batches,
-            'triplet_loss': total_triplet_loss / num_batches
+            'contrast_loss': total_contrast_loss / num_batches
         }
         
         return avg_losses
@@ -506,7 +508,7 @@ class ContrastiveRBVAETrainer:
         total_loss = 0.0
         total_recon_loss = 0.0
         total_kl_loss = 0.0
-        total_triplet_loss = 0.0
+        total_contrast_loss = 0.0
         
         num_batches = len(self.val_dataloader)
         
@@ -533,32 +535,34 @@ class ContrastiveRBVAETrainer:
                 recon_loss_val = sum(recon_losses) / len(recon_losses)
                 kl_loss_val = sum(kl_losses) / len(kl_losses)
                 
-                triplet_loss_val = 0
+                contrast_loss_similar = contrast_loss(h_seqs[0], h_seqs[1], label=0)
+        
+                contrast_loss_dissim = 0
                 for state_index in range(num_states - 1):
-                    anchor = h_seqs[0][:, state_index]
-                    positive = h_seqs[1][:, state_index]
-                    negative = h_seqs[0][:, state_index + 1]
-                    triplet_loss_val += triplet_loss(anchor, positive, negative, 
-                        margin=self.margin, p=2.0, swap=True)
-                triplet_loss_val /= float(num_states - 1)
+                    dissim_z_a = h_seqs[0][:, state_index]
+                    dissim_z_b = h_seqs[0][:, state_index + 1]
+                    contrast_loss_dissim += contrast_loss(dissim_z_a, dissim_z_b, label=1)
+                contrast_loss_dissim /= float(num_states - 1)
+                
+                contrast_loss_val = contrast_loss_similar + contrast_loss_dissim
                 
                 total_loss_val = (
                     recon_loss_val +
                     self.beta_kl * kl_loss_val +
-                    self.alpha_triplet * triplet_loss_val
+                    self.alpha_contrast * contrast_loss_val
                 )
                 
                 total_loss += total_loss_val.item()
                 total_recon_loss += recon_loss_val.item()
                 total_kl_loss += kl_loss_val.item()
-                total_triplet_loss += triplet_loss_val.item()
+                total_contrast_loss += contrast_loss_val.item()
         
         # Calculate average losses
         avg_losses = {
             'total_loss': total_loss / num_batches,
             'recon_loss': total_recon_loss / num_batches,
             'kl_loss': total_kl_loss / num_batches,
-            'triplet_loss': total_triplet_loss / num_batches
+            'contrast_loss': total_contrast_loss / num_batches
         }
         
         return avg_losses
@@ -614,9 +618,9 @@ class ContrastiveRBVAETrainer:
             # Print progress
             print(f"Epoch {epoch+1}/{num_epochs}")
             print(f"Train - Total: {train_losses['total_loss']:.4f}, Recon: {train_losses['recon_loss']:.4f}, "
-                  f"KL: {train_losses['kl_loss']:.4f}, Triplet: {train_losses['triplet_loss']:.4f}")
+                  f"KL: {train_losses['kl_loss']:.4f}, Contrast: {train_losses['contrast_loss']:.4f}")
             print(f"Val - Total: {val_losses['total_loss']:.4f}, Recon: {val_losses['recon_loss']:.4f}, "
-                  f"KL: {val_losses['kl_loss']:.4f}, Triplet: {val_losses['triplet_loss']:.4f}")
+                  f"KL: {val_losses['kl_loss']:.4f}, Contrast: {val_losses['contrast_loss']:.4f}")
         
         if self.writer:
             self.writer.close()
@@ -666,7 +670,7 @@ if __name__ == "__main__":
         num_steps_to_update=int((num_epochs * len(train_dataset)) / 750),
         bernoulli_p=0.1,
         margin=0.2,
-        alpha_triplet=1.0,
+        alpha_contrast=1.0,
         beta_kl=1.0,
         log_dir="./runs/rb_vae_experiment"
     )
