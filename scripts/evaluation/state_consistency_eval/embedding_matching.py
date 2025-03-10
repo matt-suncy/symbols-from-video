@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
-from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
+# from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
 
 # This is a CALLABLE
 RESOLUTION = 256
@@ -114,7 +114,8 @@ if __name__ == "__main__":
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
-    rbvae_model.load_state_dict(torch.load(model_path, weights_only=True))
+    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+    rbvae_model.load_state_dict(checkpoint['model_state_dict'])
     rbvae_model.to(device)
     rbvae_model.eval()
     # Remember: any input tensor must be sent to device before feeding into the model.

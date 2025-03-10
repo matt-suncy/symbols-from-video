@@ -58,7 +58,8 @@ if __name__ == "__main__":
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
-    rbvae_model.load_state_dict(torch.load(model_path, weights_only=True))
+    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+    rbvae_model.load_state_dict(checkpoint['model_state_dict'])
     rbvae_model.to(device)
     rbvae_model.eval()
     # Remember: any input tensor must be sent to device before feeding into the model.
@@ -84,7 +85,7 @@ if __name__ == "__main__":
             input_tensor = frame[None, None, :, :, :].to(device)
             # Get the latent representation.
             # This call assumes that the model has an "encode" method that returns the latent vector.
-            latent = rbvae_model.encode(input_tensor)  # Expected shape: [1, latent_dim]
+            latent = rbvae_model.encode(input_tensor, hard=True)  # Expected shape: [1, latent_dim]
             latent = latent.cpu().numpy().squeeze()    # Remove batch dimension and move to CPU
             latent_vectors.append(latent)
             # Assign a label based on the frame index using the flags
