@@ -150,7 +150,7 @@ if __name__ == "__main__":
             input_tensor = frame[None, None, :, :, :].to(device)
             # Get the latent representation.
             # This call assumes that the model has an "encode" method that returns the latent vector.
-            latent = rbvae_model.encode(input_tensor, hard=True)  # Expected shape: [1, latent_dim]
+            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)  # Expected shape: [1, latent_dim]
             latent = latent.cpu().numpy().squeeze()    # Remove batch dimension and move to CPU
             latent_vectors.append(latent)
             # Assign a label based on the frame index using the flags
@@ -162,8 +162,18 @@ if __name__ == "__main__":
     # Find the most common latent state for each class
     for label in range(len(flags)):
         label_vectors = latent_vectors[np.array(labels) == label]
-        most_common_vector = np.argmax(np.bincount(label_vectors))
+        
+        # Get unique latent vectors and their counts
+        unique_vectors, counts = np.unique(label_vectors, axis=0, return_counts=True)
+        
+        # Get the most common latent vector (the one with the highest count)
+        most_common_vector = unique_vectors[np.argmax(counts)]
         print(f"Most common latent state for class {label}: {most_common_vector}")
+        
+        # Calculate the percentage of frames that match this latent state
+        matches = np.all(label_vectors == most_common_vector, axis=1)
+        percentage = np.sum(matches) / len(label_vectors)
+        print(f"Percentage of frames that match the most common latent state for class {label}: {percentage}")
 
     # Find the percentage of frames that match the most common latent state for each class
     percentages = []

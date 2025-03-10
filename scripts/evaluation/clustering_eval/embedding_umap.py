@@ -85,7 +85,7 @@ if __name__ == "__main__":
             input_tensor = frame[None, None, :, :, :].to(device)
             # Get the latent representation.
             # This call assumes that the model has an "encode" method that returns the latent vector.
-            latent = rbvae_model.encode(input_tensor, hard=True)  # Expected shape: [1, latent_dim]
+            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)  # Expected shape: [1, latent_dim]
             latent = latent.cpu().numpy().squeeze()    # Remove batch dimension and move to CPU
             latent_vectors.append(latent)
             # Assign a label based on the frame index using the flags
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     latent_vectors = np.array(latent_vectors)
 
     # Use UMAP to reduce the latent space to 2 dimensions
-    umap_model = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean', random_state=42)
+    umap_model = umap.UMAP(n_neighbors=100, min_dist=0.1, metric='hamming', random_state=42)
     embedding_2d = umap_model.fit_transform(latent_vectors)
 
     # Visualize the UMAP projection
