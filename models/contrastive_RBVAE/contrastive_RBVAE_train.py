@@ -148,10 +148,13 @@ def kl_binary_concrete(q_logits, p=0.5, eps=1e-8):
 
 def contrast_loss(x1, x2, label, margin: float=1.0):
     """
-    Computes Contrastive Loss. Requires an input label to determine difference
+    Computes Contrastive Loss using cosine distance. Requires an input label to determine difference
     between classes (0 for similar, 1 for dissimilar).
     """
-    dist = F.pairwise_distance(x1, x2)
+    # Cosine similarity is between -1 and 1, so cosine distance is between 0 and 2
+    cos_sim = F.cosine_similarity(x1, x2)
+    dist = 1 - cos_sim  # Convert similarity to distance (0 to 2 range)
+    
     loss = (1 - label) * torch.pow(dist, 2) + label * torch.pow(torch.clamp(margin - dist, min=0.0), 2)
     loss = torch.mean(loss)
     return loss
