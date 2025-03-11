@@ -6,6 +6,7 @@
 *.exe
 *.o
 *.so
+*.pyc
 
 # Packages #
 ############
@@ -48,3 +49,10 @@ Thumbs.db
 # Weights #
 ###########
 *.ckpt
+*.pt
+
+# Paths #
+#########
+/models/contrastive_RBVAE/models
+/models/contrastive_RBVAE/runs
+/models/contrastive_RBVAE/wandb
