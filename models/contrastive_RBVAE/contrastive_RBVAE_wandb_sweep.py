@@ -18,11 +18,15 @@ def train_with_config():
     """
     Train a model with hyperparameters from wandb.config and log metrics
     """
+    wandb.init()
     # Access the config values provided by W&B
     config = wandb.config
-    
+    # print("WandB Config:", config)  # Debug print to see what's inside
+     
     # Set up paths and state segmentation
-    frames_dir = Path(config.frames_dir)
+    frames_dir_value = config.get("frames_dir", 
+        "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1")
+    frames_dir = Path(frames_dir_value)
     last_frame = config.last_frame
     flags = config.flags
     grey_out = config.grey_out
@@ -79,8 +83,12 @@ def train_with_config():
     max_iters = config.num_epochs * len(train_dataset)
     num_steps_to_update = int(max_iters / config.num_temp_updates)
     
-    # Create unique log directory for this run
-    log_dir = Path("./runs") / wandb.run.name
+    # Determine the base directory (i.e., the sweep program's directory)
+    base_dir = Path(__file__).resolve().parent
+    
+    # Create unique log directory for this run inside the base directory
+    log_dir = base_dir / "runs" / wandb.run.name
+    log_dir.mkdir(parents=True, exist_ok=True)
     
     # Initialize trainer with config hyperparameters
     trainer = ContrastiveRBVAETrainer(
@@ -100,8 +108,12 @@ def train_with_config():
         log_dir=log_dir
     )
     
-    # Train the model and get history
-    save_path = Path("./models") / f"model_{wandb.run.name}.pt"
+    # Create the models directory inside the base directory
+    models_dir = base_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Train the model and get history, saving the model to the models directory
+    save_path = models_dir / f"model_{wandb.run.name}.pt"
     history = trainer.train(num_epochs=config.num_epochs, save_path=save_path)
     
     # Log final metrics to wandb
@@ -110,9 +122,9 @@ def train_with_config():
         "best_epoch": history["best_epoch"]
     })
     
-    # Save the best model to wandb
+    # Save the best model to wandb inside the models directory
     if trainer.best_model_state is not None:
-        best_model_path = Path("./models") / f"best_model_{wandb.run.name}.pt"
+        best_model_path = models_dir / f"best_model_{wandb.run.name}.pt"
         torch.save({
             'model_state_dict': trainer.best_model_state,
             'config': dict(config),
@@ -129,6 +141,7 @@ def train_with_wandb():
     wandb.run.summary['best_val_loss'] = best_val_loss
 
 def main():
+    
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Run W&B hyperparameter sweep for Contrastive RBVAE')
     parser.add_argument('--sweep_id', type=str, help='W&B sweep ID to join an existing sweep')
@@ -194,11 +207,11 @@ def main():
                 'max': 5
             },
             'num_epochs': {
-                'value': 100
+                'value': 50
             },
             # Fixed parameters
             'frames_dir': {
-                'value': str(Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4"))
+                'value': "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1"
             },
             'last_frame': {
                 'value': 1425
@@ -227,3 +240,5 @@ def main():
 
 if __name__ == "__main__":
     main() 
+
+    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --create_sweep --project_name PROJECT-NAME
