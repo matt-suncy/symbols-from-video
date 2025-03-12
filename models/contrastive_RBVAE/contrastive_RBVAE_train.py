@@ -16,8 +16,11 @@ from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
-
-from contrastive_RBVAE_model import Seq2SeqBinaryVAE
+# Sometimes I need to import stuff from this file and I just don't care if the model's path lines up or not
+try:
+    from contrastive_RBVAE_model import Seq2SeqBinaryVAE
+except:
+    print("Warning: Seq2SeqBinaryVAE was NOT successfully imported.")
 ###
 
 ### LOSS FUNCTIONS ###
@@ -592,11 +595,10 @@ if __name__ == "__main__":
     state_segments = []
     for i in range(len(flags)):
         if i > 0:
-            state_segments.append((flags[i-1] + grey_out, flags[i] - grey_out + 1))
-        elif i == len(flags)-1:
-            state_segments.append((flags[i] + grey_out, last_frame + 1))
+            state_segments.append((flags[i-1] + grey_out + 1, flags[i] - grey_out))
         else:
-            state_segments.append((0, flags[0] - grey_out + 1))
+            state_segments.append((0, flags[0] - grey_out))
+    state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
     # Setup datasets and dataloaders
     batch_size = 32

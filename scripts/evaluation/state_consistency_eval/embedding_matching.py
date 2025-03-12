@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
-# from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
+from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
 
 # This is a CALLABLE
 RESOLUTION = 256
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     # Set the frames directory and parameters
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1.mp4"
+        "videos/frames/kid_playing_with_blocks_1"
     )
     last_frame = 1425
     # Frame indices that separate different states (classes)
@@ -131,64 +131,74 @@ if __name__ == "__main__":
     state_segments = []
     for i in range(len(flags)):
         if i > 0:
-            state_segments.append((flags[i-1] + grey_out, flags[i] - grey_out + 1))
-        elif i == len(flags)-1:
-            state_segments.append((flags[i] + grey_out, last_frame + 1))
+            state_segments.append((flags[i-1] + grey_out + 1, flags[i] - grey_out))
         else:
-            state_segments.append((0, flags[0] - grey_out + 1))
+            state_segments.append((0, flags[0] - grey_out))
+    state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
 
+    # Initialize validation dataset
+    val_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="val")
+    
+    # Get validation indices from all states
+    val_indices = np.concatenate(val_dataset.val_indices_per_state).astype(int)
+    
     print("Loading frames...")
+    # Load ALL frames (needed to index into val_indices)
     frames = load_frames(frames_dir, (0, last_frame), transform=ImageTransforms)
 
     latent_vectors = []
     labels = []
 
-    # Loop through each frame and compute its latent embedding
+    # Loop through only VALIDATION frames
     with torch.no_grad():
-        for idx, frame in enumerate(frames):
-            # Add a batch and time dimension and move the tensor to the proper device
+        for idx in val_indices:
+            frame = frames[idx]  # Get frame from loaded data
+            # Add batch and time dimensions
             input_tensor = frame[None, None, :, :, :].to(device)
-            # Get the latent representation.
-            # This call assumes that the model has an "encode" method that returns the latent vector.
-            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)  # Expected shape: [1, latent_dim]
-            latent = latent.cpu().numpy().squeeze()    # Remove batch dimension and move to CPU
+            # Encode to get latent vector
+            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)
+            latent = latent.cpu().numpy().squeeze()
             latent_vectors.append(latent)
-            # Assign a label based on the frame index using the flags
+            # Assign label
             label = assign_label(idx, flags)
             labels.append(label)
 
     latent_vectors = np.array(latent_vectors)
+    labels = np.array(labels)
 
-    # Find the most common latent state for each class
-    for label in range(len(flags)):
-        label_vectors = latent_vectors[np.array(labels) == label]
-        
-        # Get unique latent vectors and their counts
-        unique_vectors, counts = np.unique(label_vectors, axis=0, return_counts=True)
-        
-        # Get the most common latent vector (the one with the highest count)
-        most_common_vector = unique_vectors[np.argmax(counts)]
-        print(f"Most common latent state for class {label}: {most_common_vector}")
-        
-        # Calculate the percentage of frames that match this latent state
-        matches = np.all(label_vectors == most_common_vector, axis=1)
-        percentage = np.sum(matches) / len(label_vectors)
-        print(f"Percentage of frames that match the most common latent state for class {label}: {percentage}")
-
-    # Find the percentage of frames that match the most common latent state for each class
+    # Calculate metrics using only validation data
     percentages = []
-    for label in range(len(flags)):
-        label_vectors = latent_vectors[np.array(labels) == label]
-        percentage = np.sum(label_vectors == most_common_vector) / len(label_vectors)
-        print(f"Percentage of frames that match the most common latent state for class {label}: {percentage}")
+    most_common_vectors = []
+    for label in range(len(flags) + 1):
+        label_mask = labels == label
+        label_vectors = latent_vectors[label_mask]
+        
+        if len(label_vectors) == 0:
+            print(f"No validation frames for class {label}. Skipping.")
+            percentages.append(0.0)
+            most_common_vectors.append(None)
+            continue
+        
+        # Find most common embedding
+        unique_vectors, counts = np.unique(label_vectors, axis=0, return_counts=True)
+        most_common_vector = unique_vectors[np.argmax(counts)]
+        most_common_vectors.append(most_common_vector)
+        
+        # Calculate match percentage
+        matches = np.all(label_vectors == most_common_vector, axis=1)
+        percentage = np.mean(matches)
         percentages.append(percentage)
+        
+        print(f"Class {label}: Most common = {most_common_vector}, Match % = {percentage:.2f}")
 
-    # Calculate the weighted average of the matching percentages
-    weighted_average = np.sum(percentages * np.array(flags)) / np.sum(flags)
-    print(f"Weighted average of the matching percentages: {weighted_average}")
+    # Weighted average using validation frame counts per state
+    counts = [np.sum(labels == label) for label in range(len(flags) + 1)]
+    total = sum(counts)
+    weighted_avg = np.dot(percentages, counts) / total if total > 0 else 0
+    print(f"\nWeighted Average Consistency: {weighted_avg:.2f}")
 
     # Plot the percentage of frames that match the most common latent state for each class
-    plt.plot(range(len(flags)), percentages)
+    plt.plot(range(len(flags) + 1), percentages)  # Corrected x-axis
     plt.xlabel("Class")
     plt.ylabel("Percentage of frames that match the most common latent state")
     plt.show()
@@ -197,8 +207,11 @@ if __name__ == "__main__":
     plt.savefig("embedding_matching.png")
 
     # Find the number of unique latent states for each class
-    for label in range(len(flags)):
+    for label in range(len(flags) + 1):  # Corrected loop range
         label_vectors = latent_vectors[np.array(labels) == label]
+        if len(label_vectors) == 0:
+            print(f"No frames found for class {label}.")
+            continue
         unique_vectors = np.unique(label_vectors, axis=0)
         print(f"Number of unique latent states for class {label}: {len(unique_vectors)}")
     
