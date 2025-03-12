@@ -188,9 +188,6 @@ def main():
                 'min': 550,
                 'max': 1100
             },
-            'bernoulli_p': {
-                'values': [0.1, 0.5]
-            },
             'margin': {
                 'distribution': 'uniform',
                 'min': 0.1,
@@ -210,6 +207,9 @@ def main():
                 'value': 50
             },
             # Fixed parameters
+            'bernoulli_p': {
+                'value': 0.1
+            },
             'frames_dir': {
                 'value': "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1"
             },
@@ -241,4 +241,4 @@ def main():
 if __name__ == "__main__":
     main() 
 
-    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --create_sweep --project_name PROJECT-NAME
+    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --project_name PROJECT-NAME
