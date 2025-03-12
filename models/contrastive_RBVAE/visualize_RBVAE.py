@@ -17,8 +17,9 @@ def visualize():
 
     # Instantiate the model
     model = Seq2SeqBinaryVAE(in_channels=channels, out_channels=channels,
-                             latent_dim=16, hidden_dim=16)
+                             latent_dim=32, hidden_dim=32)
     # TODO: Incorporate loss into tensorboard visuals 
+    model.eval()
 
     # Create a TensorBoard SummaryWriter (logs will go to ./runs)
     writer = SummaryWriter(log_dir="./runs/rbvae_visualization")
