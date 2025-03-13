@@ -105,7 +105,8 @@ def train_with_config():
         margin=config.margin,
         alpha_contrast=config.alpha_contrast,
         beta_kl=config.beta_kl,
-        log_dir=log_dir
+        log_dir=log_dir,
+        flags=flags  # Added flags parameter
     )
     
     # Create the models directory inside the base directory
@@ -118,7 +119,7 @@ def train_with_config():
     
     # Log final metrics to wandb
     wandb.log({
-        "best_val_loss": history["best_val_loss"],
+        "best_consistency_score": history["best_consistency"],
         "best_epoch": history["best_epoch"]
     })
     
@@ -129,16 +130,16 @@ def train_with_config():
             'model_state_dict': trainer.best_model_state,
             'config': dict(config),
             'best_epoch': history["best_epoch"],
-            'best_val_loss': history["best_val_loss"]
+            'best_consistency_score': history["best_consistency"]
         }, best_model_path)
         wandb.save(str(best_model_path))
     
-    return history["best_val_loss"]
+    return history["best_consistency"]
 
 def train_with_wandb():
     """Wrapper function to initialize wandb run and call the training function"""
-    best_val_loss = train_with_config()
-    wandb.run.summary['best_val_loss'] = best_val_loss
+    best_consistency = train_with_config()
+    wandb.run.summary['best_consistency_score'] = best_consistency
 
 def main():
     
@@ -153,8 +154,8 @@ def main():
     sweep_config = {
         'method': 'bayes',
         'metric': {
-            'name': 'best_val_loss',
-            'goal': 'minimize'
+            'name': 'best_consistency_score',  # Changed metric name
+            'goal': 'maximize'  # Changed goal to maximize consistency
         },
         'parameters': {
             'learning_rate': {
@@ -166,7 +167,7 @@ def main():
                 'values': [16, 32, 64]
             },
             'latent_dim': {
-                'values': [16, 32, 64]
+                'values': [25, 50, 75, 100]
             },
             'init_temperature': {
                 'distribution': 'uniform',

@@ -327,6 +327,19 @@ class ShuffledStatePairDataset(Dataset):
         return image
 
 
+def assign_label(frame_index, flags):
+    """
+    Assigns a class label based on the provided flag indices.
+    Frames before the first flag are label 0, between the first and second flag are label 1, etc.
+    """
+    label = 0
+    for f in flags:
+        if frame_index >= f:
+            label += 1
+        else:
+            break
+    return label
+
 class ContrastiveRBVAETrainer:
     def __init__(
         self,
@@ -343,7 +356,8 @@ class ContrastiveRBVAETrainer:
         margin=1.0,
         alpha_contrast=0.1,
         beta_kl=0.1,
-        log_dir=None
+        log_dir=None,
+        flags=None  # Added flags parameter
     ):
         self.model = model
         self.device = device
@@ -360,13 +374,78 @@ class ContrastiveRBVAETrainer:
         self.margin = margin
         self.alpha_contrast = alpha_contrast
         self.beta_kl = beta_kl
+        self.flags = flags  # Store flags for state consistency evaluation
         
         # Initialize tensorboard writer if log_dir is provided
         self.writer = SummaryWriter(log_dir=log_dir) if log_dir else None
         
-        # Track best validation loss
-        self.best_val_loss = float('inf')
+        # Track best validation metric
+        self.best_val_metric = float('-inf')  # Changed to -inf since we want to maximize consistency
         self.best_model_state = None
+
+    def calculate_state_consistency(self, temperature):
+        """
+        Calculates the state consistency metric using validation data.
+        Returns the weighted average consistency across all states.
+        """
+        self.model.eval()
+        val_dataset = self.val_dataloader.dataset
+        
+        latent_vectors = []
+        labels = []
+        
+        # Get all validation indices
+        val_indices = []
+        for indices in val_dataset.val_indices_per_state:
+            val_indices.extend(indices)
+        
+        with torch.no_grad():
+            for idx in val_indices:
+                # Load and transform the frame
+                filename = f"{idx:010d}.jpg"
+                path = os.path.join(val_dataset.frames_dir, filename)
+                image = Image.open(path).convert("RGB")
+                if val_dataset.transform is not None:
+                    frame = val_dataset.transform(image)
+                
+                # Add batch and time dimensions
+                input_tensor = frame[None, None, :, :, :].to(self.device)
+                # Encode to get latent vector using current temperature
+                latent = self.model.encode(input_tensor, temperature=temperature, hard=True)
+                latent = latent.cpu().numpy().squeeze()
+                latent_vectors.append(latent)
+                # Assign label
+                label = assign_label(idx, self.flags)
+                labels.append(label)
+
+        latent_vectors = np.array(latent_vectors)
+        labels = np.array(labels)
+
+        # Calculate consistency for each state
+        percentages = []
+        for label in range(len(self.flags) + 1):
+            label_mask = labels == label
+            label_vectors = latent_vectors[label_mask]
+            
+            if len(label_vectors) == 0:
+                percentages.append(0.0)
+                continue
+            
+            # Find most common embedding
+            unique_vectors, counts = np.unique(label_vectors, axis=0, return_counts=True)
+            most_common_vector = unique_vectors[np.argmax(counts)]
+            
+            # Calculate match percentage
+            matches = np.all(label_vectors == most_common_vector, axis=1)
+            percentage = np.mean(matches)
+            percentages.append(percentage)
+
+        # Calculate weighted average
+        counts = [np.sum(labels == label) for label in range(len(self.flags) + 1)]
+        total = sum(counts)
+        weighted_avg = np.dot(percentages, counts) / total if total > 0 else 0
+
+        return weighted_avg, percentages
 
     def train_one_epoch(self, epoch):
         """Trains the model for one epoch and returns average losses."""
@@ -453,7 +532,7 @@ class ContrastiveRBVAETrainer:
         return avg_losses
 
     def validate(self):
-        """Evaluates the model on validation data and returns average losses."""
+        """Evaluates the model on validation data and returns metrics including state consistency."""
         self.model.eval()
         total_loss = 0.0
         total_recon_loss = 0.0
@@ -482,7 +561,7 @@ class ContrastiveRBVAETrainer:
                     x_recon, h_seq, bc_seq = self.model(
                         frame,
                         temperature=self.final_temperature,
-                        hard=False
+                        hard=True  # Changed to True as requested
                     )
                     recon_losses.append(recon_loss(x_recon, frame))
                     kl_losses.append(kl_binary_concrete(bc_seq, p=self.bernoulli_p))
@@ -522,6 +601,14 @@ class ContrastiveRBVAETrainer:
             'contrast_loss': total_contrast_loss / num_batches
         }
         
+        # Calculate state consistency metric
+        consistency_score, state_percentages = self.calculate_state_consistency(self.final_temperature)
+        avg_losses['consistency_score'] = consistency_score
+        
+        # Add individual state consistencies to metrics
+        for i, pct in enumerate(state_percentages):
+            avg_losses[f'state_{i}_consistency'] = pct
+        
         return avg_losses
 
     def train(self, num_epochs, save_path=None):
@@ -537,7 +624,7 @@ class ContrastiveRBVAETrainer:
             'train_losses': [],
             'val_losses': [],
             'best_epoch': 0,
-            'best_val_loss': float('inf')
+            'best_consistency': float('-inf')  # Changed to track best consistency
         }
         
         for epoch in range(num_epochs):
@@ -554,9 +641,9 @@ class ContrastiveRBVAETrainer:
                 for key, value in val_losses.items():
                     self.writer.add_scalar(f'Epoch/Val_{key}', value, epoch)
             
-            # Save best model
-            if val_losses['total_loss'] < history['best_val_loss']:
-                history['best_val_loss'] = val_losses['total_loss']
+            # Save best model based on consistency score
+            if val_losses['consistency_score'] > history['best_consistency']:
+                history['best_consistency'] = val_losses['consistency_score']
                 history['best_epoch'] = epoch
                 self.best_model_state = self.model.state_dict()
                 
@@ -565,7 +652,7 @@ class ContrastiveRBVAETrainer:
                         'epoch': epoch,
                         'model_state_dict': self.model.state_dict(),
                         'optimizer_state_dict': self.optimizer.state_dict(),
-                        'val_loss': val_losses['total_loss'],
+                        'consistency_score': val_losses['consistency_score'],
                     }, save_path)
             
             # Store losses
@@ -578,6 +665,7 @@ class ContrastiveRBVAETrainer:
                   f"KL: {train_losses['kl_loss']:.4f}, Contrast: {train_losses['contrast_loss']:.4f}")
             print(f"Val - Total: {val_losses['total_loss']:.4f}, Recon: {val_losses['recon_loss']:.4f}, "
                   f"KL: {val_losses['kl_loss']:.4f}, Contrast: {val_losses['contrast_loss']:.4f}")
+            print(f"Consistency Score: {val_losses['consistency_score']:.4f}")
         
         if self.writer:
             self.writer.close()
@@ -628,12 +716,13 @@ if __name__ == "__main__":
         margin=0.2,
         alpha_contrast=1.0,
         beta_kl=1.0,
-        log_dir="./runs/rb_vae_experiment"
+        log_dir="./runs/rb_vae_experiment",
+        flags=flags
     )
     
     # Train the model
     save_path = Path(__file__).parent.joinpath("saved_RBVAE")
     history = trainer.train(num_epochs=num_epochs, save_path=save_path)
     
-    print(f"Best validation loss: {history['best_val_loss']:.4f} at epoch {history['best_epoch']}")
+    print(f"Best validation consistency score: {history['best_consistency']:.4f} at epoch {history['best_epoch']}")
     print("Run 'tensorboard --logdir=runs' to visualize the training progress.")
