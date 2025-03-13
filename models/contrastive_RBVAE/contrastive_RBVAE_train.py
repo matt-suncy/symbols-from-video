@@ -383,6 +383,25 @@ class ContrastiveRBVAETrainer:
         self.best_val_metric = float('-inf')  # Changed to -inf since we want to maximize consistency
         self.best_model_state = None
 
+        # Initialize temperature state
+        self.current_temperature = init_temperature
+        self.global_step = 0
+
+    def get_current_temperature(self):
+        """
+        Calculate the current temperature based on the global step.
+        Uses both anneal_rate and num_steps_to_update to control temperature decay.
+        """
+        # Only update temperature at specified intervals
+        if self.global_step % self.num_steps_to_update == 0:
+            # Calculate temperature using exponential decay
+            self.current_temperature = max(
+                self.final_temperature,
+                self.init_temperature * np.exp(-self.anneal_rate * self.global_step)
+            )
+            
+        return self.current_temperature
+
     def calculate_state_consistency(self, temperature):
         """
         Calculates the state consistency metric using validation data.
@@ -456,19 +475,14 @@ class ContrastiveRBVAETrainer:
         total_contrast_loss = 0.0
         
         num_batches = len(self.train_dataloader)
-        temperature = self.init_temperature
         
         for batch_idx, item in enumerate(self.train_dataloader):
-            global_step = epoch * num_batches + batch_idx + 1
+            self.global_step += 1
+            temperature = self.get_current_temperature()
             
-            # Update temperature
-            if global_step % self.num_steps_to_update == 0:
-                temperature = max(
-                    self.final_temperature,
-                    self.init_temperature * np.exp(-self.anneal_rate * global_step)
-                )
-                if self.writer:
-                    self.writer.add_scalar('Batch/Temperature', temperature, global_step)
+            # Log temperature if it was updated
+            if self.global_step % self.num_steps_to_update == 0 and self.writer:
+                self.writer.add_scalar('Batch/Temperature', temperature, self.global_step)
             
             num_batches_item, _, num_states, _, _, _ = item.size()
             item = item.to(self.device)
@@ -516,17 +530,18 @@ class ContrastiveRBVAETrainer:
             
             # Log batch metrics
             if self.writer:
-                self.writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), global_step)
-                self.writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), global_step)
-                self.writer.add_scalar('Batch/KL_Divergence', kl_loss_val.item(), global_step)
-                self.writer.add_scalar('Batch/Contrast_Loss', contrast_loss_val.item(), global_step)
+                self.writer.add_scalar('Batch/Total_Loss', total_loss_val.item(), self.global_step)
+                self.writer.add_scalar('Batch/Reconstruction_Loss', recon_loss_val.item(), self.global_step)
+                self.writer.add_scalar('Batch/KL_Divergence', kl_loss_val.item(), self.global_step)
+                self.writer.add_scalar('Batch/Contrast_Loss', contrast_loss_val.item(), self.global_step)
         
         # Calculate average losses
         avg_losses = {
             'total_loss': total_loss / num_batches,
             'recon_loss': total_recon_loss / num_batches,
             'kl_loss': total_kl_loss / num_batches,
-            'contrast_loss': total_contrast_loss / num_batches
+            'contrast_loss': total_contrast_loss / num_batches,
+            'temperature': self.current_temperature  # Add current temperature to metrics
         }
         
         return avg_losses

@@ -79,9 +79,9 @@ def train_with_config():
     # Initialize optimizer
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     
-    # Calculate num_steps_to_update based on config
-    max_iters = config.num_epochs * len(train_dataset)
-    num_steps_to_update = int(max_iters / config.num_temp_updates)
+    # Calculate num_steps_to_update based on total steps and desired number of updates
+    total_steps = config.num_epochs * len(train_dataset)
+    num_steps_to_update = max(1, total_steps // config.num_temp_updates)
     
     # Determine the base directory (i.e., the sweep program's directory)
     base_dir = Path(__file__).resolve().parent
@@ -106,7 +106,7 @@ def train_with_config():
         alpha_contrast=config.alpha_contrast,
         beta_kl=config.beta_kl,
         log_dir=log_dir,
-        flags=flags  # Added flags parameter
+        flags=flags
     )
     
     # Create the models directory inside the base directory
@@ -120,7 +120,11 @@ def train_with_config():
     # Log final metrics to wandb
     wandb.log({
         "best_consistency_score": history["best_consistency"],
-        "best_epoch": history["best_epoch"]
+        "best_epoch": history["best_epoch"],
+        "final_temperature": trainer.current_temperature,
+        "total_steps": trainer.global_step,
+        "num_temp_updates": config.num_temp_updates,
+        "actual_num_updates": trainer.global_step // num_steps_to_update
     })
     
     # Save the best model to wandb inside the models directory
@@ -130,7 +134,11 @@ def train_with_config():
             'model_state_dict': trainer.best_model_state,
             'config': dict(config),
             'best_epoch': history["best_epoch"],
-            'best_consistency_score': history["best_consistency"]
+            'best_consistency_score': history["best_consistency"],
+            'final_temperature': trainer.current_temperature,
+            'total_steps': trainer.global_step,
+            'num_temp_updates': config.num_temp_updates,
+            'actual_num_updates': trainer.global_step // num_steps_to_update
         }, best_model_path)
         wandb.save(str(best_model_path))
     
@@ -154,8 +162,8 @@ def main():
     sweep_config = {
         'method': 'bayes',
         'metric': {
-            'name': 'best_consistency_score',  # Changed metric name
-            'goal': 'maximize'  # Changed goal to maximize consistency
+            'name': 'best_consistency_score',
+            'goal': 'maximize'
         },
         'parameters': {
             'learning_rate': {
