@@ -15,7 +15,7 @@ import torchvision.transforms as T
 import numpy as np
 ###
 
-def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-8):
+def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-8, noise_ratio=0.1):
     """
     Args:
     logits: [batch, latent_dim] 
@@ -33,7 +33,7 @@ def binary_concrete_logits(logits, temperature=0.5, hard=False, eps=1e-8):
     # Sample uniform noise
     U = torch.rand(logits.shape).to(logits.device)
     # Convert uniform noise to logistic noise
-    noise = torch.log(U + eps) - torch.log(1.0 - U + eps)
+    noise = noise_ratio * (torch.log(U + eps) - torch.log(1.0 - U + eps))
 
     # Add noise to logits and scale by temperature
     y = torch.sigmoid((logits + noise) / temperature)
