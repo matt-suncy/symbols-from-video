@@ -177,7 +177,6 @@ class Seq2SeqBinaryVAE(nn.Module):
         # x: [B, T, C, H, W]
         B, T, C, H, W = x.size()
 
-        # Feed through conv encoder
         x_reshaped = x.reshape(B*T, C, H, W)
         x_conv = self.encoder_cnn(x_reshaped) # [B*T, latent_dim]
         x_conv= x_conv.reshape(B, T, self.latent_dim)
