@@ -102,6 +102,7 @@ def train_with_config():
         anneal_rate=config.anneal_rate,
         num_steps_to_update=num_steps_to_update,
         bernoulli_p=config.bernoulli_p,
+        noise_ratio=config.noise_ratio,
         margin=config.margin,
         alpha_contrast=config.alpha_contrast,
         beta_kl=config.beta_kl,
@@ -196,6 +197,11 @@ def main():
                 'distribution': 'int_uniform',
                 'min': 550,
                 'max': 1100
+            },
+            'noise_ratio': {
+                'distribution': 'uniform',
+                'min': 0.05,
+                'max': 0.2
             },
             'margin': {
                 'distribution': 'uniform',

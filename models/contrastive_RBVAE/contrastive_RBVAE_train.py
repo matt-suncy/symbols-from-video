@@ -353,11 +353,12 @@ class ContrastiveRBVAETrainer:
         anneal_rate=1e-4,
         num_steps_to_update=100,
         bernoulli_p=0.5,
+        noise_ratio=0.1,
         margin=1.0,
         alpha_contrast=0.1,
         beta_kl=0.1,
         log_dir=None,
-        flags=None  # Added flags parameter
+        flags=None
     ):
         self.model = model
         self.device = device
@@ -371,10 +372,11 @@ class ContrastiveRBVAETrainer:
         self.anneal_rate = anneal_rate
         self.num_steps_to_update = num_steps_to_update
         self.bernoulli_p = bernoulli_p
+        self.noise_ratio = noise_ratio
         self.margin = margin
         self.alpha_contrast = alpha_contrast
         self.beta_kl = beta_kl
-        self.flags = flags  # Store flags for state consistency evaluation
+        self.flags = flags
         
         # Initialize tensorboard writer if log_dir is provided
         self.writer = SummaryWriter(log_dir=log_dir) if log_dir else None
@@ -430,7 +432,7 @@ class ContrastiveRBVAETrainer:
                 # Add batch and time dimensions
                 input_tensor = frame[None, None, :, :, :].to(self.device)
                 # Encode to get latent vector using current temperature
-                latent = self.model.encode(input_tensor, temperature=temperature, hard=True)
+                latent = self.model.encode(input_tensor, temperature=temperature, hard=True, noise_ratio=self.noise_ratio)
                 latent = latent.cpu().numpy().squeeze()
                 latent_vectors.append(latent)
                 # Assign label
@@ -493,7 +495,7 @@ class ContrastiveRBVAETrainer:
             h_seqs = []
             
             for frame in frames:
-                x_recon, h_seq, bc_seq = self.model(frame, temperature=temperature, hard=False)
+                x_recon, h_seq, bc_seq = self.model(frame, temperature=temperature, hard=False, noise_ratio=self.noise_ratio)
                 recon_losses.append(recon_loss(x_recon, frame))
                 kl_losses.append(kl_binary_concrete(bc_seq, p=self.bernoulli_p))
                 h_seqs.append(h_seq)
@@ -576,7 +578,8 @@ class ContrastiveRBVAETrainer:
                     x_recon, h_seq, bc_seq = self.model(
                         frame,
                         temperature=self.final_temperature,
-                        hard=True  # Changed to True as requested
+                        hard=True,
+                        noise_ratio=self.noise_ratio
                     )
                     recon_losses.append(recon_loss(x_recon, frame))
                     kl_losses.append(kl_binary_concrete(bc_seq, p=self.bernoulli_p))
@@ -728,6 +731,7 @@ if __name__ == "__main__":
         anneal_rate=1e-3,
         num_steps_to_update=int((num_epochs * len(train_dataset)) / 750),
         bernoulli_p=0.1,
+        noise_ratio=0.1,
         margin=0.2,
         alpha_contrast=1.0,
         beta_kl=1.0,
