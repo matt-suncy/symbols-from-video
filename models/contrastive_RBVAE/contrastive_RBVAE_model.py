@@ -2,8 +2,6 @@
 Author: Matthew Sun
 Description: Implementing a simple version of a Recurrent Binary Variational Autoencoder, 
 purpose is to figure out the details of the architecture
-
-# NOTE: MARKED FOR REreshape
 '''
 
 ### IMPORTS
