@@ -18,7 +18,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 # Sometimes I need to import stuff from this file and I just don't care if the model's path lines up or not
 try:
-    from percep_RBVAE_model_RBVAE_model import Seq2SeqBinaryVAE
+    from percep_RBVAE_model import Seq2SeqBinaryVAE
 except:
     print("Warning: Seq2SeqBinaryVAE was NOT successfully imported.")
 ###
@@ -107,11 +107,12 @@ def contrast_loss(x1, x2, label, margin: float=1.0, dist='euclidean'):
     return loss.mean()
 
 # Callable image transform
-RESOLUTION = 256
-ImageTransforms = T.Compose([
-    T.Resize((RESOLUTION, RESOLUTION)),
-    T.ToTensor()
-])
+# Not needed for embeddings, but kept for reference
+# RESOLUTION = 256
+# ImageTransforms = T.Compose([
+#     T.Resize((RESOLUTION, RESOLUTION)),
+#     T.ToTensor()
+# ])
 
 ### DATASETS ###
 
@@ -119,13 +120,13 @@ ImageTransforms = T.Compose([
 class SampleStatePairDataset(Dataset):
     '''
     Args:
-        input_dir: Path to the directory containing the perceptual AE embedding.
+        input_embeddings: Dictionary containing the perceptual AE embedding.
         state_segments: List of tuples (start_idx, end_idx) determining state groupings.
         transform: Transform to be applied on each frame.
         num_items: Number of items that this Dataset will yield.
     '''
-    def __init__(self, input_dir, state_segments, transform=None, num_items=1000):
-        self.input_dir = input_dir
+    def __init__(self, input_embeddings, state_segments, transform=None, num_items=1000):
+        self.input_embeddings = input_embeddings
         self.state_segments = state_segments
         self.transform = transform
         self.num_items = num_items
@@ -146,20 +147,30 @@ class SampleStatePairDataset(Dataset):
                 index1 = index2 = 0
             else:
                 index1, index2 = random.sample(frame_indices, 2)
-            frame1 = self._load_frame(index1)
-            frame2 = self._load_frame(index2)
+            frame1 = self._load_embedding(index1)
+            frame2 = self._load_embedding(index2)
             pairs.append(torch.stack([frame1, frame2], dim=0))  # [2, C, H, W]
         pairs_tensor = torch.stack(pairs, dim=0)  # [T, 2, C, H, W]
         pairs_tensor = pairs_tensor.permute(1, 0, 2, 3, 4)  # [2, T, C, H, W]
         return pairs_tensor
-
-    def _load_frame(self, frame_index):
-        filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(self.input_dir, filename)
-        image = Image.open(path).convert("RGB")
-        if self.transform is not None:
-            image = self.transform(image)
-        return image
+        
+    def _load_embedding(self, frame_index):
+        # Get embedding from the dictionary using frame index as key
+        key = f"{frame_index:010d}.jpg"
+        embedding = self.input_embeddings.get(key)
+        if embedding is None:
+            # Try without the .jpg extension
+            key = f"{frame_index:010d}"
+            embedding = self.input_embeddings.get(key)
+            
+        if embedding is None:
+            raise KeyError(f"No embedding found for frame index {frame_index}")
+            
+        # Convert to tensor if it's not already
+        if not isinstance(embedding, torch.Tensor):
+            embedding = torch.tensor(embedding, dtype=torch.float32)
+            
+        return embedding
 
 # TODO: rework this to include validation and test splits
 '''
@@ -170,17 +181,17 @@ I'm thinking to just take a contiguous segment of X% of frames from each state
 class ShuffledStatePairDataset(Dataset):
     """
     Args:
-        input_dir:      Path to the perceptual AE embeddings.
+        input_embeddings: Dictionary containing the perceptual AE embeddings or path to .npy file.
         state_segments:  List of (start_idx, end_idx) for each state
         test_pct:        Fraction of total frames (per state) to devote to test
         val_pct:         Fraction of total frames (per state) to devote to val
-        transform:       Any image transform (e.g. torchvision transforms)
+        transform:       Any transform to be applied to embeddings (usually None for embeddings)
         mode:            One of ["train", "test", "val"] – determines which subset
                          of indices (train vs. test vs. val) is served by __getitem__.
     """
     def __init__(
         self, 
-        input_dir, 
+        input_embeddings, 
         state_segments, 
         test_pct=0.1, 
         val_pct=0.1, 
@@ -188,7 +199,12 @@ class ShuffledStatePairDataset(Dataset):
         mode="train"
     ):
         super().__init__()
-        self.input_dir = input_dir
+        # Load embeddings if a path is provided
+        if isinstance(input_embeddings, (str, Path)):
+            self.input_embeddings = np.load(input_embeddings, allow_pickle=True).item()
+        else:
+            self.input_embeddings = input_embeddings
+            
         self.state_segments = state_segments
         self.transform = transform
         self.mode = mode.lower().strip()
@@ -310,22 +326,38 @@ class ShuffledStatePairDataset(Dataset):
 
             real_pair_idx = idx % len(pairs_list)
             pair = pairs_list[real_pair_idx]
-            frame1 = self._load_frame(pair[0])
-            frame2 = self._load_frame(pair[1])
+            frame1 = self._load_embedding(pair[0])
+            frame2 = self._load_embedding(pair[1])
             pairs.append(torch.stack([frame1, frame2], dim=0))  # [2, C, H, W]
 
         # Combine [state_1, state_2, ...] => [2, T, C, H, W]
         pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)
         return pairs_tensor
 
-    def _load_frame(self, frame_index):
-        filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(self.input_dir, filename)
-        image = Image.open(path).convert("RGB")
+    def _load_embedding(self, frame_index):
+        """
+        Load embedding for a specific frame index from the input_embeddings dictionary.
+        """
+        # Get embedding from the dictionary using frame index as key
+        key = f"{frame_index:010d}.jpg"
+        embedding = self.input_embeddings.get(key)
+        if embedding is None:
+            # Try without the .jpg extension
+            key = f"{frame_index:010d}"
+            embedding = self.input_embeddings.get(key)
+            
+        if embedding is None:
+            raise KeyError(f"No embedding found for frame index {frame_index}")
+            
+        # Convert to tensor if it's not already
+        if not isinstance(embedding, torch.Tensor):
+            embedding = torch.tensor(embedding, dtype=torch.float32)
+            
+        # Apply transform if provided (usually not needed for embeddings)
         if self.transform is not None:
-            image = self.transform(image)
-        return image
-
+            embedding = self.transform(embedding)
+            
+        return embedding
 
 def assign_label(frame_index, flags):
     """
@@ -422,15 +454,11 @@ class ContrastiveRBVAETrainer:
         
         with torch.no_grad():
             for idx in val_indices:
-                # Load and transform the frame
-                filename = f"{idx:010d}.jpg"
-                path = os.path.join(val_dataset.input_dir, filename)
-                image = Image.open(path).convert("RGB")
-                if val_dataset.transform is not None:
-                    frame = val_dataset.transform(image)
+                # Load embedding for the frame
+                embedding = val_dataset._load_embedding(idx)
                 
                 # Add batch and time dimensions
-                input_tensor = frame[None, None, :, :, :].to(self.device)
+                input_tensor = embedding[None, None, :, :, :].to(self.device)
                 # Encode to get latent vector using current temperature
                 latent = self.model.encode(input_tensor, temperature=temperature, hard=True, noise_ratio=self.noise_ratio)
                 latent = latent.cpu().numpy().squeeze()
@@ -692,12 +720,13 @@ class ContrastiveRBVAETrainer:
 
 if __name__ == "__main__":
     # Set up paths and state segmentation
+    frames_path = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1") # Folder with frames
     input_dir = Path(__file__).parent.parent.parent.joinpath("videos/kid_playing_with_blocks_perceps.npy")
     input_embeddings = np.load(input_dir, allow_pickle=True).item() # dictionary
 
     # NOTE to self: you barely have to change any of the code for how the data is loaded in.
     # The input_embeddings data is a dictionary to store embeddings (key: image path, value: embedding array)
-    
+    # Each input embedding has shape [C=4, H=88, H=160]
 
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
@@ -714,14 +743,16 @@ if __name__ == "__main__":
     
     # Setup datasets and dataloaders
     batch_size = 64
-    train_dataset = ShuffledStatePairDataset(input_dir, state_segments, transform=ImageTransforms, mode="train")
-    val_dataset = ShuffledStatePairDataset(input_dir, state_segments, transform=ImageTransforms, mode="val")
+    # No need for transforms when working with embeddings
+    train_dataset = ShuffledStatePairDataset(input_embeddings, state_segments, transform=None, mode="train")
+    val_dataset = ShuffledStatePairDataset(input_embeddings, state_segments, transform=None, mode="val")
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Setup model and training
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32).to(device)
+    # Update channels to match embedding dimensions (C=4)
+    model = Seq2SeqBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     num_epochs = 50
 

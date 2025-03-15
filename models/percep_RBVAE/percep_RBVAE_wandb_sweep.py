@@ -7,8 +7,8 @@ from pathlib import Path
 import argparse
 import os
 
-from contrastive_RBVAE_model import Seq2SeqBinaryVAE
-from contrastive_RBVAE_train import (
+from percep_RBVAE_model import Seq2SeqBinaryVAE
+from percep_RBVAE_train import (
     ContrastiveRBVAETrainer,
     ShuffledStatePairDataset,
     ImageTransforms
