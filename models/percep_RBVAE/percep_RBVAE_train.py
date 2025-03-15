@@ -18,7 +18,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 # Sometimes I need to import stuff from this file and I just don't care if the model's path lines up or not
 try:
-    from contrastive_RBVAE_model import Seq2SeqBinaryVAE
+    from percep_RBVAE_model_RBVAE_model import Seq2SeqBinaryVAE
 except:
     print("Warning: Seq2SeqBinaryVAE was NOT successfully imported.")
 ###
@@ -119,13 +119,13 @@ ImageTransforms = T.Compose([
 class SampleStatePairDataset(Dataset):
     '''
     Args:
-        frames_dir: Path to the directory containing the frames.
+        input_dir: Path to the directory containing the perceptual AE embedding.
         state_segments: List of tuples (start_idx, end_idx) determining state groupings.
         transform: Transform to be applied on each frame.
         num_items: Number of items that this Dataset will yield.
     '''
-    def __init__(self, frames_dir, state_segments, transform=None, num_items=1000):
-        self.frames_dir = frames_dir
+    def __init__(self, input_dir, state_segments, transform=None, num_items=1000):
+        self.input_dir = input_dir
         self.state_segments = state_segments
         self.transform = transform
         self.num_items = num_items
@@ -155,7 +155,7 @@ class SampleStatePairDataset(Dataset):
 
     def _load_frame(self, frame_index):
         filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(self.frames_dir, filename)
+        path = os.path.join(self.input_dir, filename)
         image = Image.open(path).convert("RGB")
         if self.transform is not None:
             image = self.transform(image)
@@ -170,7 +170,7 @@ I'm thinking to just take a contiguous segment of X% of frames from each state
 class ShuffledStatePairDataset(Dataset):
     """
     Args:
-        frames_dir:      Directory with frame images named like 0000000001.jpg
+        input_dir:      Path to the perceptual AE embeddings.
         state_segments:  List of (start_idx, end_idx) for each state
         test_pct:        Fraction of total frames (per state) to devote to test
         val_pct:         Fraction of total frames (per state) to devote to val
@@ -180,7 +180,7 @@ class ShuffledStatePairDataset(Dataset):
     """
     def __init__(
         self, 
-        frames_dir, 
+        input_dir, 
         state_segments, 
         test_pct=0.1, 
         val_pct=0.1, 
@@ -188,7 +188,7 @@ class ShuffledStatePairDataset(Dataset):
         mode="train"
     ):
         super().__init__()
-        self.frames_dir = frames_dir
+        self.input_dir = input_dir
         self.state_segments = state_segments
         self.transform = transform
         self.mode = mode.lower().strip()
@@ -320,7 +320,7 @@ class ShuffledStatePairDataset(Dataset):
 
     def _load_frame(self, frame_index):
         filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(self.frames_dir, filename)
+        path = os.path.join(self.input_dir, filename)
         image = Image.open(path).convert("RGB")
         if self.transform is not None:
             image = self.transform(image)
@@ -424,7 +424,7 @@ class ContrastiveRBVAETrainer:
             for idx in val_indices:
                 # Load and transform the frame
                 filename = f"{idx:010d}.jpg"
-                path = os.path.join(val_dataset.frames_dir, filename)
+                path = os.path.join(val_dataset.input_dir, filename)
                 image = Image.open(path).convert("RGB")
                 if val_dataset.transform is not None:
                     frame = val_dataset.transform(image)
@@ -692,7 +692,13 @@ class ContrastiveRBVAETrainer:
 
 if __name__ == "__main__":
     # Set up paths and state segmentation
-    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
+    input_dir = Path(__file__).parent.parent.parent.joinpath("videos/kid_playing_with_blocks_perceps.npy")
+    input_embeddings = np.load(input_dir, allow_pickle=True).item() # dictionary
+
+    # NOTE to self: you barely have to change any of the code for how the data is loaded in.
+    # The input_embeddings data is a dictionary to store embeddings (key: image path, value: embedding array)
+    
+
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
     grey_out = 10
@@ -707,9 +713,9 @@ if __name__ == "__main__":
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
     # Setup datasets and dataloaders
-    batch_size = 32
-    train_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="train")
-    val_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="val")
+    batch_size = 64
+    train_dataset = ShuffledStatePairDataset(input_dir, state_segments, transform=ImageTransforms, mode="train")
+    val_dataset = ShuffledStatePairDataset(input_dir, state_segments, transform=ImageTransforms, mode="val")
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
