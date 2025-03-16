@@ -15,7 +15,7 @@ from ldm.util import instantiate_from_config
 # Change working directory to this file's directory
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 # Path to the folder containing input images
-IMAGE_FOLDER = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1.mp4"
+IMAGE_FOLDER = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks.mp4"
 # Path to the model configuration file (YAML)
 CONFIG_PATH = os.path.join(BASE_DIR, "configs/stable-diffusion/v1-inference.yaml")
 # Path to the model checkpoint file
@@ -97,6 +97,8 @@ def main():
             embeddings[img_path] = latent_embedding.cpu().numpy()
         except Exception as e:
             print(f"Error processing {img_path}: {e}")
+
+    print(len(embeddings.keys()))
 
     # Save all embeddings to a single NumPy file
     np.save(OUTPUT_EMBEDDINGS_FILE, embeddings)
