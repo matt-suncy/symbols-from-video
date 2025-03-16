@@ -10,11 +10,11 @@ import os
 from percep_RBVAE_model import Seq2SeqBinaryVAE
 from percep_RBVAE_train import (
     ContrastiveRBVAETrainer,
-    ShuffledStatePairDataset,
-    ImageTransforms
+    ShuffledStatePairDataset
 )
 
 FRAMES_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/C10118_rgb"
+EMBEDDINGS_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/C10118_perceps.npy"
 
 def train_with_config():
     """
@@ -25,10 +25,11 @@ def train_with_config():
     config = wandb.config
     # print("WandB Config:", config)  # Debug print to see what's inside
      
+    # Load embeddings
+    embeddings_path = config.get("embeddings_path", EMBEDDINGS_PATH)
+    input_embeddings = np.load(embeddings_path, allow_pickle=True).item()
+    
     # Set up paths and state segmentation
-    frames_dir_value = config.get("frames_dir", 
-        FRAMES_PATH)
-    frames_dir = Path(frames_dir_value)
     last_frame = config.last_frame
     flags = config.flags
     grey_out = config.grey_out
@@ -45,15 +46,15 @@ def train_with_config():
     
     # Setup datasets and dataloaders
     train_dataset = ShuffledStatePairDataset(
-        frames_dir, 
+        input_embeddings, 
         state_segments, 
-        transform=ImageTransforms, 
+        transform=None,  # No transforms needed for embeddings
         mode="train"
     )
     val_dataset = ShuffledStatePairDataset(
-        frames_dir, 
+        input_embeddings, 
         state_segments, 
-        transform=ImageTransforms, 
+        transform=None,  # No transforms needed for embeddings
         mode="val"
     )
     train_dataloader = DataLoader(
@@ -72,8 +73,8 @@ def train_with_config():
     
     # Initialize model with config hyperparameters
     model = Seq2SeqBinaryVAE(
-        in_channels=3,
-        out_channels=3,
+        in_channels=4,  # Update to match embedding dimensions
+        out_channels=4,  # Update to match embedding dimensions
         latent_dim=config.latent_dim,
         hidden_dim=config.latent_dim
     ).to(device)
@@ -155,10 +156,10 @@ def train_with_wandb():
 def main():
     
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Run W&B hyperparameter sweep for Contrastive RBVAE')
+    parser = argparse.ArgumentParser(description='Run W&B hyperparameter sweep for Perceptual RBVAE')
     parser.add_argument('--sweep_id', type=str, help='W&B sweep ID to join an existing sweep')
     parser.add_argument('--create_sweep', action='store_true', help='Create a new sweep instead of joining an existing one')
-    parser.add_argument('--project_name', type=str, default='contrastive-rbvae', help='W&B project name')
+    parser.add_argument('--project_name', type=str, default='percep-rbvae', help='W&B project name')
     args = parser.parse_args()
     
     # Define the sweep configuration
@@ -227,8 +228,8 @@ def main():
             'bernoulli_p': {
                 'value': 0.1
             },
-            'frames_dir': {
-                'value': FRAMES_PATH
+            'embeddings_path': {
+                'value': EMBEDDINGS_PATH
             },
             'last_frame': {
                 'value': 12297
@@ -258,4 +259,5 @@ def main():
 if __name__ == "__main__":
     main() 
 
-    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --project_name PROJECT-NAME
+    # Command template to use:
+    # python percep_RBVAE_wandb_sweep.py --create_sweep --project_name PROJECT-NAME
