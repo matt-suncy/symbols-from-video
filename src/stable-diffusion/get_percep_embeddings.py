@@ -48,15 +48,23 @@ def load_model_from_config(config, ckpt, verbose=False):
 def load_img(path):
     """Load an image and prepare it for the perceptual autoencoder.
     
-    The image is converted to RGB, resized to an integer multiple of 32, normalized to [-1, 1],
-    and converted to a torch tensor.
+    The image is converted to RGB, resized to 1280x720 for consistency,
+    normalized to [-1, 1], and converted to a torch tensor.
     """
     image = Image.open(path).convert("RGB")
     w, h = image.size
     print(f"Loaded image of size ({w}, {h}) from {path}")
-    # Resize to integer multiple of 32
+    
+    # Resize to 1280x720 for consistency
+    target_size = (1280, 720)
+    image = image.resize(target_size, resample=PIL.Image.LANCZOS)
+    
+    # Ensure dimensions are multiples of 32 (should already be the case with 1280x720)
+    w, h = target_size
     w, h = map(lambda x: x - x % 32, (w, h))
-    image = image.resize((w, h), resample=PIL.Image.LANCZOS)
+    if (w, h) != target_size:
+        image = image.resize((w, h), resample=PIL.Image.LANCZOS)
+    
     image = np.array(image).astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)  # shape: [1, C, H, W]
     image = torch.from_numpy(image)
