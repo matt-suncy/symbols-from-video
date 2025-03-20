@@ -10,11 +10,13 @@ from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 import numpy as np
 from matplotlib import pyplot as plt
+import pandas as pd
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
-from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
+from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE as ContrastiveRBVAE
+from models.percep_RBVAE.percep_RBVAE_model import Seq2SeqBinaryVAE as PercepRBVAE
 from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
 
 # This is a CALLABLE
@@ -107,58 +109,46 @@ def assign_label(frame_index, flags):
             break
     return label
 
-if __name__ == "__main__":
-    # Load model
-    model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/contrastive_RBVAE/saved_RBVAE"
-    )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
-    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-    rbvae_model.load_state_dict(checkpoint['model_state_dict'])
-    rbvae_model.to(device)
-    rbvae_model.eval()
-    # Remember: any input tensor must be sent to device before feeding into the model.
-
-    # Set the frames directory and parameters
-    frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1"
-    )
-    last_frame = 1425
-    # Frame indices that separate different states (classes)
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-    grey_out = 10
-    state_segments = []
-    for i in range(len(flags)):
-        if i > 0:
-            state_segments.append((flags[i-1] + grey_out + 1, flags[i] - grey_out))
-        else:
-            state_segments.append((0, flags[0] - grey_out))
-    state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
-
-    # Initialize validation dataset
-    val_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="val")
-    
-    # Get validation indices from all states
-    val_indices = np.concatenate(val_dataset.val_indices_per_state).astype(int)
-    
-    print("Loading frames...")
-    # Load ALL frames (needed to index into val_indices)
-    frames = load_frames(frames_dir, (0, last_frame), transform=ImageTransforms)
-
+def calculate_state_consistency(model, test_dataset, device, temperature=0.5, noise_ratio=0.1, perturbation=None, perturbation_params=None):
+    """
+    Calculates state consistency for a model with optional perturbation.
+    Args:
+        model: The RBVAE model to evaluate
+        test_dataset: Dataset containing test frames
+        device: Device to run model on
+        temperature: Temperature for binary concrete
+        noise_ratio: Noise ratio for binary concrete
+        perturbation: Optional perturbation function (add_gaussian_noise or add_occlusion)
+        perturbation_params: Parameters for the perturbation function
+    Returns:
+        Weighted average consistency and individual state consistencies
+    """
+    model.eval()
     latent_vectors = []
     labels = []
-
-    # Loop through only VALIDATION frames
+    
+    # Get all test indices
+    test_indices = []
+    for indices in test_dataset.test_indices_per_state:
+        test_indices.extend(indices)
+    
     with torch.no_grad():
-        for idx in val_indices:
-            frame = frames[idx]  # Get frame from loaded data
+        for idx in test_indices:
+            # Load frame
+            frame = test_dataset._load_frame(idx)
+            
+            # Apply perturbation if specified
+            if perturbation is not None:
+                frame = perturbation(frame, **perturbation_params)
+            
             # Add batch and time dimensions
             input_tensor = frame[None, None, :, :, :].to(device)
+            
             # Encode to get latent vector
-            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)
+            latent = model.encode(input_tensor, temperature=temperature, hard=True, noise_ratio=noise_ratio)
             latent = latent.cpu().numpy().squeeze()
             latent_vectors.append(latent)
+            
             # Assign label
             label = assign_label(idx, flags)
             labels.append(label)
@@ -166,52 +156,140 @@ if __name__ == "__main__":
     latent_vectors = np.array(latent_vectors)
     labels = np.array(labels)
 
-    # Calculate metrics using only validation data
+    # Calculate consistency for each state
     percentages = []
-    most_common_vectors = []
     for label in range(len(flags) + 1):
         label_mask = labels == label
         label_vectors = latent_vectors[label_mask]
         
         if len(label_vectors) == 0:
-            print(f"No validation frames for class {label}. Skipping.")
             percentages.append(0.0)
-            most_common_vectors.append(None)
             continue
         
         # Find most common embedding
         unique_vectors, counts = np.unique(label_vectors, axis=0, return_counts=True)
         most_common_vector = unique_vectors[np.argmax(counts)]
-        most_common_vectors.append(most_common_vector)
         
         # Calculate match percentage
         matches = np.all(label_vectors == most_common_vector, axis=1)
         percentage = np.mean(matches)
         percentages.append(percentage)
-        
-        print(f"Class {label}: Most common = {most_common_vector}, Match % = {percentage:.2f}")
 
-    # Weighted average using validation frame counts per state
+    # Calculate weighted average
     counts = [np.sum(labels == label) for label in range(len(flags) + 1)]
     total = sum(counts)
     weighted_avg = np.dot(percentages, counts) / total if total > 0 else 0
-    print(f"\nWeighted Average Consistency: {weighted_avg:.2f}")
 
-    # Plot the percentage of frames that match the most common latent state for each class
-    plt.plot(range(len(flags) + 1), percentages)  # Corrected x-axis
-    plt.xlabel("Class")
-    plt.ylabel("Percentage of frames that match the most common latent state")
-    plt.show()
+    return weighted_avg, percentages
 
-    # Save the plot
-    plt.savefig("embedding_matching.png")
-
-    # Find the number of unique latent states for each class
-    for label in range(len(flags) + 1):  # Corrected loop range
-        label_vectors = latent_vectors[np.array(labels) == label]
-        if len(label_vectors) == 0:
-            print(f"No frames found for class {label}.")
-            continue
-        unique_vectors = np.unique(label_vectors, axis=0)
-        print(f"Number of unique latent states for class {label}: {len(unique_vectors)}")
+if __name__ == "__main__":
+    # Set up paths and state segmentation
+    frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/frames/kid_playing_with_blocks_1"
+    )
+    last_frame = 1425
+    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
+    grey_out = 10
+    
+    # Create state segments
+    state_segments = []
+    for i in range(len(flags)):
+        if i > 0:
+            state_segments.append((flags[i-1] + grey_out + 1, flags[i] - grey_out))
+        else:
+            state_segments.append((0, flags[0] - grey_out))
+    state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
+    
+    # Setup test dataset
+    test_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="test")
+    
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Load models
+    contrastive_model = ContrastiveRBVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
+    percep_model = PercepRBVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
+    
+    # Load model checkpoints
+    contrastive_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "models/contrastive_RBVAE/saved_RBVAE"
+    )
+    percep_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "models/percep_RBVAE/saved_RBVAE"
+    )
+    
+    contrastive_checkpoint = torch.load(contrastive_path, map_location=device)
+    percep_checkpoint = torch.load(percep_path, map_location=device)
+    
+    contrastive_model.load_state_dict(contrastive_checkpoint['model_state_dict'])
+    percep_model.load_state_dict(percep_checkpoint['model_state_dict'])
+    
+    contrastive_model.to(device)
+    percep_model.to(device)
+    
+    # Define perturbation parameters
+    perturbations = {
+        'clean': None,
+        'gaussian_noise': {'std': 0.1},
+        'occlusion': {'coverage': 0.2}
+    }
+    
+    # Store results
+    results = []
+    
+    # Evaluate both models
+    for model_name, model in [('Contrastive RBVAE', contrastive_model), ('Percep RBVAE', percep_model)]:
+        for pert_name, pert_params in perturbations.items():
+            if pert_name == 'clean':
+                weighted_avg, state_percentages = calculate_state_consistency(
+                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1
+                )
+            elif pert_name == 'gaussian_noise':
+                weighted_avg, state_percentages = calculate_state_consistency(
+                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1,
+                    perturbation=add_gaussian_noise, perturbation_params=pert_params
+                )
+            else:  # occlusion
+                weighted_avg, state_percentages = calculate_state_consistency(
+                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1,
+                    perturbation=add_occlusion, perturbation_params=pert_params
+                )
+            
+            # Store results
+            result = {
+                'Model': model_name,
+                'Perturbation': pert_name,
+                'Weighted Average': weighted_avg
+            }
+            for i, pct in enumerate(state_percentages):
+                result[f'State {i}'] = pct
+            results.append(result)
+    
+    # Create DataFrame and save results
+    df = pd.DataFrame(results)
+    print("\nResults Table:")
+    print(df.to_string(index=False))
+    
+    # Save results to CSV
+    output_path = Path(__file__).parent.joinpath("state_consistency_results.csv")
+    df.to_csv(output_path, index=False)
+    print(f"\nResults saved to {output_path}")
+    
+    # Plot results
+    plt.figure(figsize=(12, 6))
+    x = np.arange(len(perturbations))
+    width = 0.35
+    
+    plt.bar(x - width/2, df[df['Model'] == 'Contrastive RBVAE']['Weighted Average'], width, label='Contrastive RBVAE')
+    plt.bar(x + width/2, df[df['Model'] == 'Percep RBVAE']['Weighted Average'], width, label='Percep RBVAE')
+    
+    plt.xlabel('Perturbation Type')
+    plt.ylabel('Weighted Average State Consistency')
+    plt.title('State Consistency Comparison')
+    plt.xticks(x, list(perturbations.keys()))
+    plt.legend()
+    
+    # Save plot
+    plt.savefig(Path(__file__).parent.joinpath("state_consistency_comparison.png"))
+    plt.close()
     
