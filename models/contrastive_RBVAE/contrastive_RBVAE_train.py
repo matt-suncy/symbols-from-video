@@ -692,9 +692,10 @@ class ContrastiveRBVAETrainer:
 
 if __name__ == "__main__":
     # Set up paths and state segmentation
-    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1.mp4")
-    last_frame = 1425
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
+    # TODO: For IKEA ASM video, maybe just do no or very very little grey out?
+    frames_dir = Path(__file__).parent.parent.parent.joinpath("videos/frames/ikea_asm_table")
+    last_frame = 2469
+    flags = [157, 205, 441, 494, 557, 887, 909, 1010, 1048, 1315, 1388, 1438, 1702, 1847, 2096, 2174]
     grey_out = 10
     
     # Create state segments
