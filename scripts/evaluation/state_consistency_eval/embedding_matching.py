@@ -229,7 +229,7 @@ def load_img(path):
 if __name__ == "__main__":
     # Set up paths and state segmentation
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1"
+        "videos/frames/kid_playing_with_blocks"
     )
     input_dir = Path(__file__).parent.parent.parent.parent.joinpath(
         "videos/kid_playing_with_blocks_perceps.npy"
@@ -256,15 +256,19 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load RBVAE models
-    contrastive_model = ContrastiveRBVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
-    percep_model = PercepRBVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
+    contrastive_latent_dim = 25
+    contrastive_model = ContrastiveRBVAE(in_channels=3, out_channels=3, 
+        latent_dim=contrastive_latent_dim, hidden_dim=contrastive_latent_dim)
+    percep_latent_dim = 25
+    percep_model = PercepRBVAE(in_channels=4, out_channels=4,
+        latent_dim=percep_latent_dim, hidden_dim=percep_latent_dim)
     
     # Load model checkpoints
     contrastive_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/contrastive_RBVAE/saved_RBVAE"
+        "scripts/evaluation/best_models/pixels/best_model_breezy-sweep-38.pt"
     )
     percep_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/percep_RBVAE/saved_RBVAE"
+        "scripts/evaluation/best_models/perceps/best_model_grateful-sweep-19.pt"
     )
     
     contrastive_checkpoint = torch.load(contrastive_path, map_location=device)
@@ -291,16 +295,16 @@ if __name__ == "__main__":
         for pert_name, pert_params in perturbations.items():
             if pert_name == 'clean':
                 weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1
+                    model, test_dataset, device, temperature=0.2, noise_ratio=0.1
                 )
             elif pert_name == 'gaussian_noise':
                 weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1,
+                    model, test_dataset, device, temperature=0.2, noise_ratio=0.1,
                     perturbation=add_gaussian_noise, perturbation_params=pert_params
                 )
             else:  # occlusion
                 weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, temperature=0.5, noise_ratio=0.1,
+                    model, test_dataset, device, temperature=0.2, noise_ratio=0.1,
                     perturbation=add_occlusion, perturbation_params=pert_params
                 )
             
