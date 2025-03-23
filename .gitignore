@@ -56,6 +56,6 @@ Thumbs.db
 /models/contrastive_RBVAE/models
 /models/contrastive_RBVAE/runs
 /models/contrastive_RBVAE/wandb
-/models/percep_RBVAE/models/models
-/models/percep_RBVAE/models/runs
-/models/percep_RBVAE/models/wandb
+/models/percep_RBVAE/models
+/models/percep_RBVAE/runs
+/models/percep_RBVAE/wandb
