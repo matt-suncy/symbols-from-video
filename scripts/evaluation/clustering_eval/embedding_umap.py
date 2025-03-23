@@ -18,6 +18,7 @@ from sklearn.decomposition import PCA
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
+from models.percep_RBVAE.percep_RBVAE_model import Seq2SeqBinaryVAE as PercepBinaryVAE
 from models.percep_RBVAE.percep_RBVAE_train import ShuffledStatePairDataset
 
 # This is a CALLABLE
@@ -165,7 +166,7 @@ if __name__ == "__main__":
     percep_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
         "models/percep_RBVAE/saved_RBVAE"
     )
-    percep_model = Seq2SeqBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
+    percep_model = PercepBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
     checkpoint = torch.load(percep_model_path, map_location=torch.device('cpu'))
     percep_model.load_state_dict(checkpoint['model_state_dict'])
     percep_model.to(device)
