@@ -11,13 +11,20 @@ import torchvision.transforms as T
 import numpy as np
 from matplotlib import pyplot as plt
 import pandas as pd
+from omegaconf import OmegaConf
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
+
+# Add stable diffusion to path
+stable_diffusion_path = os.path.join(project_root, "src/stable-diffusion")
+sys.path.insert(0, stable_diffusion_path)
+
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE as ContrastiveRBVAE
 from models.percep_RBVAE.percep_RBVAE_model import Seq2SeqBinaryVAE as PercepRBVAE
 from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
+from ldm.util import instantiate_from_config
 
 # This is a CALLABLE
 RESOLUTION = 256
@@ -134,15 +141,15 @@ def calculate_state_consistency(model, test_dataset, device, temperature=0.5, no
     
     with torch.no_grad():
         for idx in test_indices:
-            # Load frame
-            frame = test_dataset._load_frame(idx)
+            # Load embedding for the frame
+            embedding = test_dataset._load_embedding(idx)
             
             # Apply perturbation if specified
             if perturbation is not None:
-                frame = perturbation(frame, **perturbation_params)
+                embedding = perturbation(embedding, **perturbation_params)
             
             # Add batch and time dimensions
-            input_tensor = frame[None, None, :, :, :].to(device)
+            input_tensor = embedding[None, None, :, :, :].to(device)
             
             # Encode to get latent vector
             latent = model.encode(input_tensor, temperature=temperature, hard=True, noise_ratio=noise_ratio)
@@ -182,11 +189,54 @@ def calculate_state_consistency(model, test_dataset, device, temperature=0.5, no
 
     return weighted_avg, percentages
 
+def load_model_from_config(config, ckpt, verbose=False):
+    """Load the latent diffusion model from config and checkpoint."""
+    print(f"Loading model from {ckpt}")
+    pl_sd = torch.load(ckpt, map_location="cpu")
+    if "global_step" in pl_sd:
+        print(f"Global Step: {pl_sd['global_step']}")
+    sd = pl_sd["state_dict"]
+    model = instantiate_from_config(config.model)
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    if len(missing) > 0 and verbose:
+        print("Missing keys:", missing)
+    if len(unexpected) > 0 and verbose:
+        print("Unexpected keys:", unexpected)
+    model.cuda()
+    model.eval()
+    return model
+
+def load_img(path):
+    """Load an image and prepare it for the perceptual autoencoder."""
+    image = Image.open(path).convert("RGB")
+    w, h = image.size
+    print(f"Loaded image of size ({w}, {h}) from {path}")
+    
+    # Resize to 1280x720 for consistency
+    target_size = (1280, 720)
+    image = image.resize(target_size, resample=PIL.Image.LANCZOS)
+    
+    # Ensure dimensions are multiples of 32 (should already be the case with 1280x720)
+    w, h = target_size
+    w, h = map(lambda x: x - x % 32, (w, h))
+    if (w, h) != target_size:
+        image = image.resize((w, h), resample=PIL.Image.LANCZOS)
+    
+    image = np.array(image).astype(np.float32) / 255.0
+    image = image[None].transpose(0, 3, 1, 2)  # shape: [1, C, H, W]
+    image = torch.from_numpy(image)
+    return 2. * image - 1.
+
 if __name__ == "__main__":
     # Set up paths and state segmentation
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
         "videos/frames/kid_playing_with_blocks_1"
     )
+    input_dir = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/kid_playing_with_blocks_perceps.npy"
+    )
+    input_embeddings = np.load(input_dir, allow_pickle=True).item()  # dictionary
+
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
     grey_out = 10
@@ -201,12 +251,12 @@ if __name__ == "__main__":
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
     # Setup test dataset
-    test_dataset = ShuffledStatePairDataset(frames_dir, state_segments, transform=ImageTransforms, mode="test")
+    test_dataset = ShuffledStatePairDataset(input_embeddings, state_segments, transform=None, mode="test")
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Load models
+    # Load RBVAE models
     contrastive_model = ContrastiveRBVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
     percep_model = PercepRBVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
     

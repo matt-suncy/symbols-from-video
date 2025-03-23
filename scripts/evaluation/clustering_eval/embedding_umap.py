@@ -11,11 +11,14 @@ import torchvision.transforms as T
 import numpy as np
 from matplotlib import pyplot as plt
 import umap  # UMAP for dimensionality reduction
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 sys.path.insert(0, project_root)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE
+from models.percep_RBVAE.percep_RBVAE_train import ShuffledStatePairDataset
 
 # This is a CALLABLE
 RESOLUTION = 256
@@ -51,49 +54,10 @@ def assign_label(frame_index, flags):
             break
     return label
 
-if __name__ == "__main__":
-    # Load model
-    model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/contrastive_RBVAE/saved_RBVAE"
-    )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    rbvae_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
-    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-    rbvae_model.load_state_dict(checkpoint['model_state_dict'])
-    rbvae_model.to(device)
-    rbvae_model.eval()
-    # Remember: any input tensor must be sent to device before feeding into the model.
-
-    # Set the frames directory and parameters
-    frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1.mp4"
-    )
-    last_frame = 1425
-    # Frame indices that separate different states (classes)
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-
-    print("Loading frames...")
-    frames = load_frames(frames_dir, (0, last_frame), transform=ImageTransforms)
-
-    latent_vectors = []
-    labels = []
-
-    # Loop through each frame and compute its latent embedding
-    with torch.no_grad():
-        for idx, frame in enumerate(frames):
-            # Add a batch and time dimension and move the tensor to the proper device
-            input_tensor = frame[None, None, :, :, :].to(device)
-            # Get the latent representation.
-            # This call assumes that the model has an "encode" method that returns the latent vector.
-            latent = rbvae_model.encode(input_tensor, temperature=0.5, hard=True)  # Expected shape: [1, latent_dim]
-            latent = latent.cpu().numpy().squeeze()    # Remove batch dimension and move to CPU
-            latent_vectors.append(latent)
-            # Assign a label based on the frame index using the flags
-            label = assign_label(idx, flags)
-            labels.append(label)
-
-    latent_vectors = np.array(latent_vectors)
-
+def create_umap_visualization(latent_vectors, labels, title, output_path):
+    """
+    Creates and saves a UMAP visualization.
+    """
     # Use UMAP to reduce the latent space to 2 dimensions
     umap_model = umap.UMAP(n_neighbors=100, min_dist=0.1, metric='hamming', random_state=42)
     embedding_2d = umap_model.fit_transform(latent_vectors)
@@ -101,8 +65,190 @@ if __name__ == "__main__":
     # Visualize the UMAP projection
     plt.figure(figsize=(10, 8))
     scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
-    plt.title("UMAP Projection of RBVAE Latent Embeddings")
+    plt.title(title)
     plt.xlabel("UMAP Dimension 1")
     plt.ylabel("UMAP Dimension 2")
     plt.colorbar(scatter, label="Frame Class")
-    plt.savefig(os.path.join(os.path.dirname(__file__), "RBVAE_UMAP"))
+    plt.savefig(output_path)
+    plt.close()
+
+def create_tsne_visualization(latent_vectors, labels, title, output_path):
+    """
+    Creates and saves a t-SNE visualization.
+    """
+    # Use t-SNE to reduce the latent space to 2 dimensions
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    embedding_2d = tsne.fit_transform(latent_vectors)
+
+    # Visualize the t-SNE projection
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
+    plt.title(title)
+    plt.xlabel("t-SNE Dimension 1")
+    plt.ylabel("t-SNE Dimension 2")
+    plt.colorbar(scatter, label="Frame Class")
+    plt.savefig(output_path)
+    plt.close()
+
+def create_pca_visualization(latent_vectors, labels, title, output_path):
+    """
+    Creates and saves a PCA visualization with 2 principal components.
+    """
+    # Use PCA to reduce the latent space to 2 dimensions
+    pca = PCA(n_components=2)
+    embedding_2d = pca.fit_transform(latent_vectors)
+
+    # Visualize the PCA projection
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
+    plt.title(title)
+    plt.xlabel("First Principal Component")
+    plt.ylabel("Second Principal Component")
+    plt.colorbar(scatter, label="Frame Class")
+    plt.savefig(output_path)
+    plt.close()
+
+def get_test_indices(state_segments, test_pct=0.1, val_pct=0.1):
+    """
+    Gets test set indices for each state using the same logic as ShuffledStatePairDataset.
+    """
+    test_indices = []
+    for start, end in state_segments:
+        full_indices = list(range(start, end))
+        n = len(full_indices)
+        test_val_count = int(n * (test_pct + val_pct))
+        margin = (n - test_val_count) // 2
+        test_val_indices = full_indices[margin : margin + test_val_count]
+        
+        if test_val_count > 0:
+            test_fraction_of_middle = test_pct / (test_pct + val_pct)
+            test_count = int(round(test_fraction_of_middle * test_val_count))
+            test_indices.extend(test_val_indices[:test_count])
+    
+    return sorted(test_indices)
+
+if __name__ == "__main__":
+    # Set up paths and parameters
+    frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/frames/kid_playing_with_blocks_1.mp4"
+    )
+    last_frame = 1425
+    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
+    grey_out = 10
+    
+    # Create state segments
+    state_segments = []
+    for i in range(len(flags)):
+        if i > 0:
+            state_segments.append((flags[i-1] + grey_out + 1, flags[i] - grey_out))
+        else:
+            state_segments.append((0, flags[0] - grey_out))
+    state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
+
+    # Get test set indices
+    test_indices = get_test_indices(state_segments)
+
+    # Set up device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load and process for contrastive RBVAE
+    contrastive_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "models/contrastive_RBVAE/saved_RBVAE"
+    )
+    contrastive_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
+    checkpoint = torch.load(contrastive_model_path, map_location=torch.device('cpu'))
+    contrastive_model.load_state_dict(checkpoint['model_state_dict'])
+    contrastive_model.to(device)
+    contrastive_model.eval()
+
+    # Load and process for perceptual RBVAE
+    percep_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "models/percep_RBVAE/saved_RBVAE"
+    )
+    percep_model = Seq2SeqBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
+    checkpoint = torch.load(percep_model_path, map_location=torch.device('cpu'))
+    percep_model.load_state_dict(checkpoint['model_state_dict'])
+    percep_model.to(device)
+    percep_model.eval()
+
+    # Load perceptual embeddings
+    percep_embeddings_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/kid_playing_with_blocks_perceps.npy"
+    )
+    percep_embeddings = np.load(percep_embeddings_path, allow_pickle=True).item()
+
+    # Process test frames for both models
+    contrastive_latent_vectors = []
+    percep_latent_vectors = []
+    labels = []
+
+    print("Processing test frames...")
+    with torch.no_grad():
+        for idx in test_indices:
+            # For contrastive model
+            frame = ImageTransforms(Image.open(os.path.join(frames_dir, f"{idx:010d}.jpg")).convert("RGB"))
+            input_tensor = frame[None, None, :, :, :].to(device)
+            latent = contrastive_model.encode(input_tensor, temperature=0.5, hard=True)
+            contrastive_latent_vectors.append(latent.cpu().numpy().squeeze())
+
+            # For perceptual model
+            key = f"{idx:010d}.jpg"
+            percep_embedding = percep_embeddings.get(key)
+            if percep_embedding is None:
+                key = f"{idx:010d}"
+                percep_embedding = percep_embeddings.get(key)
+            percep_tensor = torch.tensor(percep_embedding, dtype=torch.float32)[None, None, :, :, :].to(device)
+            latent = percep_model.encode(percep_tensor, temperature=0.5, hard=True)
+            percep_latent_vectors.append(latent.cpu().numpy().squeeze())
+
+            # Label only needs to be added once since it's the same for both
+            labels.append(assign_label(idx, flags))
+
+    contrastive_latent_vectors = np.array(contrastive_latent_vectors)
+    percep_latent_vectors = np.array(percep_latent_vectors)
+    labels = np.array(labels)
+
+    # Create visualizations for all dimensionality reduction methods
+    print("Creating dimensionality reduction visualizations...")
+    
+    # UMAP visualizations
+    create_umap_visualization(
+        contrastive_latent_vectors, 
+        labels, 
+        "UMAP Projection of Contrastive RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Contrastive_RBVAE_UMAP")
+    )
+    create_umap_visualization(
+        percep_latent_vectors, 
+        labels, 
+        "UMAP Projection of Perceptual RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Perceptual_RBVAE_UMAP")
+    )
+    
+    # t-SNE visualizations
+    create_tsne_visualization(
+        contrastive_latent_vectors, 
+        labels, 
+        "t-SNE Projection of Contrastive RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Contrastive_RBVAE_TSNE")
+    )
+    create_tsne_visualization(
+        percep_latent_vectors, 
+        labels, 
+        "t-SNE Projection of Perceptual RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Perceptual_RBVAE_TSNE")
+    )
+    
+    # PCA visualizations
+    create_pca_visualization(
+        contrastive_latent_vectors, 
+        labels, 
+        "PCA Projection of Contrastive RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Contrastive_RBVAE_PCA")
+    )
+    create_pca_visualization(
+        percep_latent_vectors, 
+        labels, 
+        "PCA Projection of Perceptual RBVAE Latent Embeddings (Test Set)",
+        os.path.join(os.path.dirname(__file__), "Perceptual_RBVAE_PCA")
+    )
