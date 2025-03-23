@@ -359,7 +359,7 @@ class TestDataset:
         if not isinstance(embedding, torch.Tensor):
             embedding = torch.tensor(embedding, dtype=torch.float32)
             
-        return embedding
+        return embedding.squeeze()
 
 if __name__ == "__main__":
     # Set up paths and state segmentation
