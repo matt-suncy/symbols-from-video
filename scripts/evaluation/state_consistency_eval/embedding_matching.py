@@ -24,7 +24,6 @@ sys.path.insert(0, stable_diffusion_path)
 from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE as ContrastiveRBVAE
 from models.percep_RBVAE.percep_RBVAE_model import Seq2SeqBinaryVAE as PercepRBVAE
 from models.contrastive_RBVAE.contrastive_RBVAE_train import ShuffledStatePairDataset
-from ldm.util import instantiate_from_config
 
 # This is a CALLABLE
 RESOLUTION = 256
