@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 from omegaconf import OmegaConf
 import multiprocessing as mp
+from functools import partial
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -227,27 +228,15 @@ def load_img(path):
     image = torch.from_numpy(image)
     return 2. * image - 1.
 
-class ShuffledStatePairDataset(Dataset):
+class TestDataset:
     """
+    A simple dataset class for loading test data, either from images or pre-computed embeddings.
     Args:
         input_data: Either a path to frames directory or a dictionary of embeddings
-        state_segments:  List of (start_idx, end_idx) for each state
-        test_pct:        Fraction of total frames (per state) to devote to test
-        val_pct:         Fraction of total frames (per state) to devote to val
-        transform:       Any transform to be applied to images (not needed for embeddings)
-        mode:            One of ["train", "test", "val"] – determines which subset
-                         of indices (train vs. test vs. val) is served by __getitem__.
+        state_segments: List of (start_idx, end_idx) for each state
+        transform: Any transform to be applied to images (not needed for embeddings)
     """
-    def __init__(
-        self, 
-        input_data, 
-        state_segments, 
-        test_pct=0.1, 
-        val_pct=0.1, 
-        transform=None, 
-        mode="train"
-    ):
-        super().__init__()
+    def __init__(self, input_data, state_segments, transform=None):
         # Determine if we're working with images or embeddings
         if isinstance(input_data, (str, Path)):
             self.frames_dir = input_data
@@ -260,21 +249,16 @@ class ShuffledStatePairDataset(Dataset):
             
         self.state_segments = state_segments
         self.transform = transform
-        self.mode = mode.lower().strip()
         self.num_states = len(self.state_segments)
 
-        # Keep track of train/test/val indices for each state
-        self.train_indices_per_state = []
+        # Keep track of test indices for each state
         self.test_indices_per_state = []
-        self.val_indices_per_state = []
 
-        # For building your shuffled pairs, you may want to keep them
-        # separate so you only sample pairs from the relevant subset:
-        self.pairs_per_state = []
-
-        # Compute the contiguous splits for each state
+        # Compute test indices for each state (using 10% of frames for test)
+        test_pct = 0.1
+        val_pct = 0.1  # We need this to match the logic from contrastive_RBVAE_train.py
         for (start, end) in self.state_segments:
-            full_indices = list(range(start, end)) 
+            full_indices = list(range(start, end))
             n = len(full_indices)
             # Size of combined test+val chunk
             test_val_count = int(n * (test_pct + val_pct))
@@ -284,159 +268,74 @@ class ShuffledStatePairDataset(Dataset):
             # Middle chunk that will be test+val
             test_val_indices = full_indices[margin : margin + test_val_count]
             
-            # The remaining frames (front chunk + back chunk) => train set
-            train_indices = (full_indices[:margin] 
-                             + full_indices[margin + test_val_count:])
-
-            # Now split test+val portion. For example, if you want them
-            # split proportionally to test_pct vs. val_pct:
+            # Now split test+val portion proportionally
             if test_val_count > 0:
                 # fraction that is test out of that middle chunk
                 test_fraction_of_middle = test_pct / (test_pct + val_pct)
                 test_count = int(round(test_fraction_of_middle * test_val_count))
-                test_indices  = test_val_indices[:test_count]
-                val_indices   = test_val_indices[test_count:]
+                test_indices = test_val_indices[:test_count]
             else:
-                # if there's no middle chunk at all, they are empty
                 test_indices = []
-                val_indices = []
-
-            self.train_indices_per_state.append(train_indices)
+                
             self.test_indices_per_state.append(test_indices)
-            self.val_indices_per_state.append(val_indices)
 
-        # Load all data into memory at initialization
-        print(f"Loading all data into memory for {mode} dataset...")
+        # Load all test data into memory
+        print("Loading test data into memory...")
         self.data = {}
         indices_to_load = []
-        if self.mode == "train":
-            for indices in self.train_indices_per_state:
-                indices_to_load.extend(indices)
-        elif self.mode == "test":
-            for indices in self.test_indices_per_state:
-                indices_to_load.extend(indices)
-        elif self.mode == "val":
-            for indices in self.val_indices_per_state:
-                indices_to_load.extend(indices)
-
-        def load_data(frame_index):
-            if self.is_embeddings:
-                # Get embedding from the dictionary using frame index as key
-                key = f"{frame_index:010d}.jpg"
-                data = self.input_embeddings.get(key)
-                if data is None:
-                    # Try without the .jpg extension
-                    key = f"{frame_index:010d}"
-                    data = self.input_embeddings.get(key)
-                    
-                if data is None:
-                    raise KeyError(f"No embedding found for frame index {frame_index}")
-                    
-                # Convert to tensor if it's not already
-                if not isinstance(data, torch.Tensor):
-                    data = torch.tensor(data, dtype=torch.float32)
-            else:
-                # Load and transform the image
-                filename = f"{frame_index:010d}.jpg"
-                path = os.path.join(self.frames_dir, filename)
-                image = Image.open(path).convert("RGB")
-                if self.transform is not None:
-                    data = self.transform(image)
-                else:
-                    data = torch.tensor(np.array(image), dtype=torch.float32)
-            
-            return frame_index, data
+        for indices in self.test_indices_per_state:
+            indices_to_load.extend(indices)
 
         # Use a pool of workers to load data
         num_workers = min(mp.cpu_count(), 8)  # Limit to 8 workers max
         with mp.Pool(num_workers) as pool:
-            results = pool.map(load_data, indices_to_load)
+            # Create partial function with fixed arguments
+            load_data_partial = partial(
+                self.load_data,
+                frames_dir=self.frames_dir,
+                input_embeddings=self.input_embeddings,
+                is_embeddings=self.is_embeddings,
+                transform=self.transform
+            )
+            results = pool.map(load_data_partial, indices_to_load)
             
         # Store loaded data in dictionary
         for frame_index, data in results:
             self.data[frame_index] = data
 
-        print(f"Loaded {len(self.data)} items into memory")
+        print(f"Loaded {len(self.data)} test items into memory")
 
-        # Build pairs after loading data
-        self._build_pairs()
-
-    def _build_pairs(self):
+    @staticmethod
+    def load_data(frame_index, frames_dir, input_embeddings, is_embeddings, transform):
         """
-        Builds the pairs for each state, depending on which subset we're using
-        (train, test, or val). By default, we'll just build pairs for the
-        specified `self.mode`. If you want separate pair-lists for each split,
-        you can do that too.
+        Static method to load either an image or embedding for a given frame index.
         """
-        if self.mode == "train":
-            all_state_indices = self.train_indices_per_state
-        elif self.mode == "test":
-            all_state_indices = self.test_indices_per_state
-        elif self.mode == "val":
-            all_state_indices = self.val_indices_per_state
+        if is_embeddings:
+            # Get embedding from the dictionary using frame index as key
+            key = f"{frame_index:010d}.jpg"
+            data = input_embeddings.get(key)
+            if data is None:
+                # Try without the .jpg extension
+                key = f"{frame_index:010d}"
+                data = input_embeddings.get(key)
+                
+            if data is None:
+                raise KeyError(f"No embedding found for frame index {frame_index}")
+                
+            # Convert to tensor if it's not already
+            if not isinstance(data, torch.Tensor):
+                data = torch.tensor(data, dtype=torch.float32)
         else:
-            raise ValueError(f"Unknown mode={self.mode}")
-
-        self.pairs_per_state = []
-        self.num_items = 0
-
-        max_frames = 0
-        for indices in all_state_indices:
-            max_frames = max(max_frames, len(indices))
-
-        for indices in all_state_indices:
-            # If there are fewer frames than max_frames, pad them
-            if len(indices) < max_frames and len(indices) > 0:
-                padded = indices.copy() + random.choices(indices, k=max_frames - len(indices))
+            # Load and transform the image
+            filename = f"{frame_index:010d}.jpg"
+            path = os.path.join(frames_dir, filename)
+            image = Image.open(path).convert("RGB")
+            if transform is not None:
+                data = transform(image)
             else:
-                padded = indices.copy()
-
-            random.shuffle(padded)
-            # Now form (frame1, frame2) pairs
-            pairs = []
-            for i in range(len(padded) // 2):
-                pairs.append((padded[2*i], padded[2*i+1]))
-
-            if len(padded) % 2 == 1:
-                leftover = padded[-1]
-                # pick any other index from 'indices' if possible
-                if len(indices) > 1:
-                    candidate = random.choice([x for x in indices if x != leftover])
-                else:
-                    candidate = leftover
-                pairs.append((leftover, candidate))
-
-            self.pairs_per_state.append(pairs)
-
-        # The number of items is basically the number of pairs each state can supply
-        # They should all have the same number of pairs
-        max_pairs = max(len(pairs_list) for pairs_list in self.pairs_per_state)
-        self.num_items = max_pairs
-
-    def __len__(self):
-        return self.num_items
-
-    def __getitem__(self, idx):
-        """
-        Collects the (idx)-th pair from each state's pair list, wraps them
-        into a single tensor. If a state's pair list is shorter than idx,
-        we wrap around mod the length (or handle however you prefer).
-        """
-        pairs = []
-        for pairs_list in self.pairs_per_state:
-            if len(pairs_list) == 0:
-                raise ValueError(f"State {idx} has no pairs")
-
-            real_pair_idx = idx % len(pairs_list)
-            pair = pairs_list[real_pair_idx]
-            # Get data from memory instead of loading from disk
-            data1 = self.data[pair[0]]
-            data2 = self.data[pair[1]]
-            pairs.append(torch.stack([data1, data2], dim=0))  # [2, C, H, W]
-
-        # Combine [state_1, state_2, ...] => [2, T, C, H, W]
-        pairs_tensor = torch.stack(pairs, dim=0).permute(1, 0, 2, 3, 4)
-        return pairs_tensor
+                data = torch.tensor(np.array(image), dtype=torch.float32)
+        
+        return frame_index, data
 
     def _load_embedding(self, frame_index):
         """
@@ -486,7 +385,7 @@ if __name__ == "__main__":
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
     # Setup test dataset
-    test_dataset = ShuffledStatePairDataset(input_embeddings, state_segments, transform=None, mode="test")
+    test_dataset = TestDataset(input_embeddings, state_segments, transform=None)
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
