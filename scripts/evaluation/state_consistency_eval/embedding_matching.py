@@ -242,8 +242,11 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
             
             # Apply perturbation if needed
             if perturbation is not None:
+                image = T.ToTensor()(image) if not isinstance(image, torch.Tensor) else image
                 image = perturbation(image, **perturbation_params)
-            
+                # Convert back to PIL image
+                image = T.ToPILImage()(image)
+
             # Generate input tensor based on model type
             if sd_model is not None:  # Perceptual model
                 # Convert PIL image to numpy array and prepare for SD model
@@ -254,6 +257,7 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
                 input_tensor = torch.from_numpy(embedding)[None, None, :, :, :].to(device)
             else:  # Contrastive model
                 # Use perturbed image directly
+                image = T.ToTensor()(image) if not isinstance(image, torch.Tensor) else image
                 input_tensor = image[None, None, :, :, :].to(device)
             
             # Encode to get latent vector
