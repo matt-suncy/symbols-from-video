@@ -30,18 +30,18 @@ ImageTransforms = T.Compose([
 
 class TestDataset(Dataset):
     """
-    Dataset class for state consistency evaluation that can handle both raw images and pre-computed embeddings.
+    Dataset class for state consistency evaluation that loads all images into memory.
     Args:
-        input_data: Either a path to image directory or a dictionary of pre-computed embeddings
+        frames_dir: Path to the directory containing the frames
         state_segments: List of (start_idx, end_idx) for each state
         test_pct: Fraction of total frames (per state) to devote to test
         val_pct: Fraction of total frames (per state) to devote to val
-        transform: Transform to be applied to images (if using raw images)
+        transform: Transform to be applied to images
         mode: One of ["train", "test", "val"] - determines which subset of indices to use
     """
     def __init__(
         self,
-        input_data,
+        frames_dir,
         state_segments,
         test_pct=0.1,
         val_pct=0.1,
@@ -53,14 +53,6 @@ class TestDataset(Dataset):
         self.transform = transform
         self.mode = mode.lower().strip()
         self.num_states = len(self.state_segments)
-
-        # Determine if we're using raw images or pre-computed embeddings
-        if isinstance(input_data, (str, Path)):
-            self.frames_dir = input_data
-            self.use_embeddings = False
-        else:
-            self.input_embeddings = input_data
-            self.use_embeddings = True
 
         # Keep track of train/test/val indices for each state
         self.train_indices_per_state = []
@@ -114,42 +106,25 @@ class TestDataset(Dataset):
         else:
             raise ValueError(f"Unknown mode={self.mode}")
 
+        # Load all frames into memory
+        print(f"Loading all frames into memory for {mode} dataset...")
+        self.frames = {}
+        for frame_index in self.indices:
+            filename = f"{frame_index:010d}.jpg"
+            path = os.path.join(frames_dir, filename)
+            image = Image.open(path).convert("RGB")
+            if self.transform is not None:
+                image = self.transform(image)
+            self.frames[frame_index] = image
+
+        print(f"Loaded {len(self.frames)} frames into memory")
+
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
         frame_index = self.indices[idx]
-        if self.use_embeddings:
-            return self._load_embedding(frame_index)
-        else:
-            return self._load_image(frame_index)
-
-    def _load_image(self, frame_index):
-        """Load and transform an image from the frames directory."""
-        filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(self.frames_dir, filename)
-        image = Image.open(path).convert("RGB")
-        if self.transform is not None:
-            image = self.transform(image)
-        return image
-
-    def _load_embedding(self, frame_index):
-        """Load a pre-computed embedding for a frame."""
-        key = f"{frame_index:010d}.jpg"
-        embedding = self.input_embeddings.get(key)
-        if embedding is None:
-            # Try without the .jpg extension
-            key = f"{frame_index:010d}"
-            embedding = self.input_embeddings.get(key)
-            
-        if embedding is None:
-            raise KeyError(f"No embedding found for frame index {frame_index}")
-            
-        # Convert to tensor if it's not already
-        if not isinstance(embedding, torch.Tensor):
-            embedding = torch.tensor(embedding, dtype=torch.float32)
-            
-        return embedding
+        return self.frames[frame_index]
 
 # Load Stable Diffusion model for perceptual embeddings
 def load_sd_model(config_path, ckpt_path):
@@ -260,21 +235,20 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
     
     with torch.no_grad():
         for idx in test_indices:
-            # Load image or embedding based on model type
+            # Get raw image and apply perturbation if needed
+            image = test_dataset.frames[idx]
+            if perturbation is not None:
+                image = perturbation(image, **perturbation_params)
+            
+            # Generate input tensor based on model type
             if sd_model is not None:  # Perceptual model
-                # Load and perturb image
-                image = test_dataset._load_image(idx)
-                if perturbation is not None:
-                    image = perturbation(image, **perturbation_params)
-                
-                # Generate perceptual embedding
+                # Generate perceptual embedding from perturbed image
                 image = image.to(device)
                 embedding = generate_perceptual_embedding(image, sd_model, device)
+                input_tensor = torch.from_numpy(embedding)[None, None, :, :, :].to(device)
             else:  # Contrastive model
-                embedding = test_dataset._load_embedding(idx)
-            
-            # Add batch and time dimensions
-            input_tensor = torch.from_numpy(embedding)[None, None, :, :, :].to(device)
+                # Use perturbed image directly
+                input_tensor = image[None, None, :, :, :].to(device)
             
             # Encode to get latent vector
             latent = model.encode(input_tensor, temperature=temperature, hard=True, noise_ratio=noise_ratio)
@@ -398,6 +372,7 @@ if __name__ == "__main__":
     
     contrastive_model.load_state_dict(contrastive_checkpoint['model_state_dict'])
     percep_model.load_state_dict(percep_checkpoint['model_state_dict'])
+    
     
     contrastive_model.to(device)
     percep_model.to(device)
