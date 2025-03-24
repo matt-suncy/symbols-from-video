@@ -162,7 +162,8 @@ def add_gaussian_noise(tensor, mean=0., std=0.1):
     # Clip values to [0,1] range since these are image tensors
     noisy = torch.clamp(noisy, 0, 1)
     
-    return noisy.squeeze(0) if tensor.dim() == 3 else noisy
+    # return noisy.squeeze(0) if tensor.dim() == 3 else noisy
+    return noisy.squeeze()
 
 
 # Function for adding occlusion to a tensor, covers X% of the image with a grey square
@@ -193,7 +194,8 @@ def add_occlusion(tensor, coverage=0.2):
     # Add grey square (value 0.5) to all channels
     occluded[:, :, y:y+square_size, x:x+square_size] = 0.5
     
-    return occluded.squeeze(0) if tensor.dim() == 3 else occluded
+    # return occluded.squeeze(0) if tensor.dim() == 3 else occluded
+    return occluded.squeeze()
 
 
 def assign_label(frame_index, flags):
