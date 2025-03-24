@@ -12,8 +12,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 import pandas as pd
 from omegaconf import OmegaConf
-import multiprocessing as mp
-from functools import partial
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -165,22 +163,14 @@ class TestDataset(Dataset):
             for indices in self.val_indices_per_state:
                 indices_to_load.extend(indices)
         
-        def load_frame(frame_index):
+        # Load frames
+        for frame_index in indices_to_load:
             filename = f"{frame_index:010d}.jpg"
             path = os.path.join(self.data_source, filename)
             image = Image.open(path).convert("RGB")
             if self.transform is not None:
                 image = self.transform(image)
-            return frame_index, image
-        
-        # Use a pool of workers to load frames
-        num_workers = min(mp.cpu_count(), 8)  # Limit to 8 workers max
-        with mp.Pool(num_workers) as pool:
-            results = pool.map(load_frame, indices_to_load)
-        
-        # Store loaded frames in dictionary
-        for frame_index, frame in results:
-            self.frames[frame_index] = frame
+            self.frames[frame_index] = image
         
         print(f"Loaded {len(self.frames)} frames into memory")
     
