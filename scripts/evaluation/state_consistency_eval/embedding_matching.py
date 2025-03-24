@@ -135,7 +135,7 @@ def generate_perceptual_embedding(image, sd_model, device):
         latent_embedding = sd_model.get_first_stage_encoding(encoded)
     return latent_embedding.squeeze().cpu().numpy()
 
-# We'll need some functions for "robustness to noise and occlusion" tests
+# Functions for robustness to noise and occlusion tests
 
 # Functon for adding gaussian noise to a tensor
 def add_gaussian_noise(tensor, mean=0., std=0.1):
@@ -247,7 +247,7 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
             # Generate input tensor based on model type
             if sd_model is not None:  # Perceptual model
                 # Generate perceptual embedding from perturbed image
-                image = image.to(device)
+                image = T.ToTensor()(image).to(device)
                 embedding = generate_perceptual_embedding(image, sd_model, device)
                 input_tensor = torch.from_numpy(embedding)[None, None, :, :, :].to(device)
             else:  # Contrastive model
