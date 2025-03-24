@@ -36,7 +36,6 @@ class TestDataset(Dataset):
         state_segments: List of (start_idx, end_idx) for each state
         test_pct: Fraction of total frames (per state) to devote to test
         val_pct: Fraction of total frames (per state) to devote to val
-        transform: Transform to be applied to images
         mode: One of ["train", "test", "val"] - determines which subset of indices to use
     """
     def __init__(
@@ -45,12 +44,10 @@ class TestDataset(Dataset):
         state_segments,
         test_pct=0.1,
         val_pct=0.1,
-        transform=None,
         mode="test"
     ):
         super().__init__()
         self.state_segments = state_segments
-        self.transform = transform
         self.mode = mode.lower().strip()
         self.num_states = len(self.state_segments)
 
@@ -113,8 +110,6 @@ class TestDataset(Dataset):
             filename = f"{frame_index:010d}.jpg"
             path = os.path.join(frames_dir, filename)
             image = Image.open(path).convert("RGB")
-            if self.transform is not None:
-                image = self.transform(image)
             self.frames[frame_index] = image
 
         print(f"Loaded {len(self.frames)} frames into memory")
@@ -211,7 +206,7 @@ def assign_label(frame_index, flags):
             break
     return label
 
-def calculate_state_consistency(model, test_dataset, device, sd_model=None, temperature=0.5, noise_ratio=0.1, perturbation=None, perturbation_params=None):
+def calculate_state_consistency(model, test_dataset, device, sd_model=None, temperature=0.5, noise_ratio=0.1, perturbation=None, perturbation_params=None, transform=None):
     """
     Calculates state consistency for a model with optional perturbation.
     Args:
@@ -223,6 +218,7 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
         noise_ratio: Noise ratio for binary concrete
         perturbation: Optional perturbation function (add_gaussian_noise or add_occlusion)
         perturbation_params: Parameters for the perturbation function
+        transform: Transform to be applied to images (only used for ContrastiveRBVAE)
     Returns:
         Weighted average consistency and individual state consistencies
     """
@@ -237,8 +233,14 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
     
     with torch.no_grad():
         for idx in test_indices:
-            # Get raw image and apply perturbation if needed
+            # Get raw image
             image = test_dataset.frames[idx]
+            
+            # Apply transform if needed (for ContrastiveRBVAE)
+            if transform is not None:
+                image = transform(image)
+            
+            # Apply perturbation if needed
             if perturbation is not None:
                 image = perturbation(image, **perturbation_params)
             
@@ -347,8 +349,8 @@ if __name__ == "__main__":
             state_segments.append((0, flags[0] - grey_out))
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
-    # Setup test dataset for raw images
-    test_dataset = TestDataset(frames_dir, state_segments, transform=ImageTransforms, test_pct=0.1, val_pct=0.1, mode="test")
+    # Setup test dataset for raw images (no transforms applied yet)
+    test_dataset = TestDataset(frames_dir, state_segments, test_pct=0.1, val_pct=0.1, mode="test")
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -374,7 +376,6 @@ if __name__ == "__main__":
     
     contrastive_model.load_state_dict(contrastive_checkpoint['model_state_dict'])
     percep_model.load_state_dict(percep_checkpoint['model_state_dict'])
-    
     
     contrastive_model.to(device)
     percep_model.to(device)
@@ -408,19 +409,22 @@ if __name__ == "__main__":
             if pert_name == 'clean':
                 weighted_avg, state_percentages = calculate_state_consistency(
                     model, test_dataset, device, sd_model if use_sd else None,
-                    temperature=0.2, noise_ratio=0.1
+                    temperature=0.2, noise_ratio=0.1,
+                    transform=ImageTransforms if not use_sd else None
                 )
             elif pert_name == 'gaussian_noise':
                 weighted_avg, state_percentages = calculate_state_consistency(
                     model, test_dataset, device, sd_model if use_sd else None,
                     temperature=0.2, noise_ratio=0.1,
-                    perturbation=add_gaussian_noise, perturbation_params=pert_params
+                    perturbation=add_gaussian_noise, perturbation_params=pert_params,
+                    transform=ImageTransforms if not use_sd else None
                 )
             else:  # occlusion
                 weighted_avg, state_percentages = calculate_state_consistency(
                     model, test_dataset, device, sd_model if use_sd else None,
                     temperature=0.2, noise_ratio=0.1,
-                    perturbation=add_occlusion, perturbation_params=pert_params
+                    perturbation=add_occlusion, perturbation_params=pert_params,
+                    transform=ImageTransforms if not use_sd else None
                 )
             
             # Store results
