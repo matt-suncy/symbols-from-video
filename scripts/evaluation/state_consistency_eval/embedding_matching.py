@@ -138,7 +138,7 @@ def generate_perceptual_embedding(image, sd_model, device):
     with torch.no_grad():
         encoded = sd_model.encode_first_stage(image)
         latent_embedding = sd_model.get_first_stage_encoding(encoded)
-    return latent_embedding.cpu().numpy()
+    return latent_embedding.squeeze().cpu().numpy()
 
 # We'll need some functions for "robustness to noise and occlusion" tests
 
