@@ -21,12 +21,135 @@ from models.contrastive_RBVAE.contrastive_RBVAE_model import Seq2SeqBinaryVAE as
 from models.percep_RBVAE.percep_RBVAE_model import Seq2SeqBinaryVAE as PercepRBVAE
 from ldm.util import instantiate_from_config
 
-# This is a CALLABLE
+# This is a CALLABLE for images being passed to ContrastiveRBVAE
 RESOLUTION = 256
 ImageTransforms = T.Compose([
     T.Resize((RESOLUTION, RESOLUTION)),
     T.ToTensor()
 ])
+
+class TestDataset(Dataset):
+    """
+    Dataset class for state consistency evaluation that can handle both raw images and pre-computed embeddings.
+    Args:
+        input_data: Either a path to image directory or a dictionary of pre-computed embeddings
+        state_segments: List of (start_idx, end_idx) for each state
+        test_pct: Fraction of total frames (per state) to devote to test
+        val_pct: Fraction of total frames (per state) to devote to val
+        transform: Transform to be applied to images (if using raw images)
+        mode: One of ["train", "test", "val"] - determines which subset of indices to use
+    """
+    def __init__(
+        self,
+        input_data,
+        state_segments,
+        test_pct=0.1,
+        val_pct=0.1,
+        transform=None,
+        mode="test"
+    ):
+        super().__init__()
+        self.state_segments = state_segments
+        self.transform = transform
+        self.mode = mode.lower().strip()
+        self.num_states = len(self.state_segments)
+
+        # Determine if we're using raw images or pre-computed embeddings
+        if isinstance(input_data, (str, Path)):
+            self.frames_dir = input_data
+            self.use_embeddings = False
+        else:
+            self.input_embeddings = input_data
+            self.use_embeddings = True
+
+        # Keep track of train/test/val indices for each state
+        self.train_indices_per_state = []
+        self.test_indices_per_state = []
+        self.val_indices_per_state = []
+
+        # Compute the contiguous splits for each state
+        for (start, end) in self.state_segments:
+            full_indices = list(range(start, end))
+            n = len(full_indices)
+            # Size of combined test+val chunk
+            test_val_count = int(n * (test_pct + val_pct))
+            # The offset from the start to that "middle" chunk
+            margin = (n - test_val_count) // 2
+
+            # Middle chunk that will be test+val
+            test_val_indices = full_indices[margin : margin + test_val_count]
+            
+            # The remaining frames (front chunk + back chunk) => train set
+            train_indices = (full_indices[:margin] 
+                           + full_indices[margin + test_val_count:])
+
+            # Now split test+val portion
+            if test_val_count > 0:
+                # fraction that is test out of that middle chunk
+                test_fraction_of_middle = test_pct / (test_pct + val_pct)
+                test_count = int(round(test_fraction_of_middle * test_val_count))
+                test_indices = test_val_indices[:test_count]
+                val_indices = test_val_indices[test_count:]
+            else:
+                test_indices = []
+                val_indices = []
+
+            self.train_indices_per_state.append(train_indices)
+            self.test_indices_per_state.append(test_indices)
+            self.val_indices_per_state.append(val_indices)
+
+        # Get the indices for the current mode
+        if self.mode == "train":
+            self.indices = []
+            for indices in self.train_indices_per_state:
+                self.indices.extend(indices)
+        elif self.mode == "test":
+            self.indices = []
+            for indices in self.test_indices_per_state:
+                self.indices.extend(indices)
+        elif self.mode == "val":
+            self.indices = []
+            for indices in self.val_indices_per_state:
+                self.indices.extend(indices)
+        else:
+            raise ValueError(f"Unknown mode={self.mode}")
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        frame_index = self.indices[idx]
+        if self.use_embeddings:
+            return self._load_embedding(frame_index)
+        else:
+            return self._load_image(frame_index)
+
+    def _load_image(self, frame_index):
+        """Load and transform an image from the frames directory."""
+        filename = f"{frame_index:010d}.jpg"
+        path = os.path.join(self.frames_dir, filename)
+        image = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            image = self.transform(image)
+        return image
+
+    def _load_embedding(self, frame_index):
+        """Load a pre-computed embedding for a frame."""
+        key = f"{frame_index:010d}.jpg"
+        embedding = self.input_embeddings.get(key)
+        if embedding is None:
+            # Try without the .jpg extension
+            key = f"{frame_index:010d}"
+            embedding = self.input_embeddings.get(key)
+            
+        if embedding is None:
+            raise KeyError(f"No embedding found for frame index {frame_index}")
+            
+        # Convert to tensor if it's not already
+        if not isinstance(embedding, torch.Tensor):
+            embedding = torch.tensor(embedding, dtype=torch.float32)
+            
+        return embedding
 
 # Load Stable Diffusion model for perceptual embeddings
 def load_sd_model(config_path, ckpt_path):
@@ -97,118 +220,6 @@ def add_occlusion(tensor, coverage=0.2):
     
     return occluded.squeeze(0) if tensor.dim() == 3 else occluded
 
-class TestDataset(Dataset):
-    def __init__(self, data_source, state_segments, transform=None, test_pct=0.1, val_pct=0.1, mode="test"):
-        """
-        Args:
-            data_source: Either a directory path to frames or a dictionary of pre-computed embeddings
-            state_segments: List of tuples (start_idx, end_idx) defining state segments
-            transform: Optional transform to apply to images
-            test_pct: Fraction of total frames (per state) to devote to test
-            val_pct: Fraction of total frames (per state) to devote to val
-            mode: One of ["train", "test", "val"] – determines which subset of indices to use
-        """
-        self.data_source = data_source
-        self.state_segments = state_segments
-        self.transform = transform
-        self.mode = mode.lower().strip()
-        
-        # Keep track of train/test/val indices for each state
-        self.train_indices_per_state = []
-        self.test_indices_per_state = []
-        self.val_indices_per_state = []
-        
-        # Compute the contiguous splits for each state
-        for (start, end) in self.state_segments:
-            full_indices = list(range(start, end))
-            n = len(full_indices)
-            # Size of combined test+val chunk
-            test_val_count = int(n * (test_pct + val_pct))
-            # The offset from the start to that "middle" chunk
-            margin = (n - test_val_count) // 2
-            
-            # Middle chunk that will be test+val
-            test_val_indices = full_indices[margin : margin + test_val_count]
-            
-            # The remaining frames (front chunk + back chunk) => train set
-            train_indices = (full_indices[:margin] + 
-                           full_indices[margin + test_val_count:])
-            
-            # Now split test+val portion
-            if test_val_count > 0:
-                # fraction that is test out of that middle chunk
-                test_fraction_of_middle = test_pct / (test_pct + val_pct)
-                test_count = int(round(test_fraction_of_middle * test_val_count))
-                test_indices = test_val_indices[:test_count]
-                val_indices = test_val_indices[test_count:]
-            else:
-                test_indices = []
-                val_indices = []
-            
-            self.train_indices_per_state.append(train_indices)
-            self.test_indices_per_state.append(test_indices)
-            self.val_indices_per_state.append(val_indices)
-        
-        # Load all frames into memory at initialization
-        print(f"Loading all frames into memory for {mode} dataset...")
-        self.frames = {}
-        indices_to_load = []
-        if self.mode == "train":
-            for indices in self.train_indices_per_state:
-                indices_to_load.extend(indices)
-        elif self.mode == "test":
-            for indices in self.test_indices_per_state:
-                indices_to_load.extend(indices)
-        elif self.mode == "val":
-            for indices in self.val_indices_per_state:
-                indices_to_load.extend(indices)
-        
-        # Load frames
-        for frame_index in indices_to_load:
-            filename = f"{frame_index:010d}.jpg"
-            path = os.path.join(self.data_source, filename)
-            image = Image.open(path).convert("RGB")
-            if self.transform is not None:
-                image = self.transform(image)
-            self.frames[frame_index] = image
-        
-        print(f"Loaded {len(self.frames)} frames into memory")
-    
-    def _load_image(self, idx):
-        """Load an image from the frames directory."""
-        if isinstance(self.data_source, (str, Path)):
-            if idx in self.frames:
-                return self.frames[idx]
-            filename = f"{idx:010d}.jpg"
-            path = os.path.join(self.data_source, filename)
-            image = Image.open(path).convert("RGB")
-            if self.transform is not None:
-                image = self.transform(image)
-            return image
-        else:
-            raise ValueError("data_source must be a directory path for image loading")
-    
-    def _load_embedding(self, idx):
-        """Load a pre-computed embedding from the dictionary."""
-        if isinstance(self.data_source, dict):
-            filename = f"{idx:010d}.jpg"
-            return self.data_source[filename]
-        else:
-            raise ValueError("data_source must be a dictionary for embedding loading")
-
-def load_frames(frames_dir, frame_indices: tuple, transform=None):
-    """
-    Loads frames into a list given the path to the frames and indices.
-    """
-    images = []
-    for frame_index in range(frame_indices[0], frame_indices[1]):
-        filename = f"{frame_index:010d}.jpg"
-        path = os.path.join(frames_dir, filename)
-        image = Image.open(path).convert("RGB")
-        if transform is not None:
-            image = transform(image)
-        images.append(image)
-    return images
 
 def assign_label(frame_index, flags):
     """
@@ -346,10 +357,6 @@ if __name__ == "__main__":
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
         "videos/frames/kid_playing_with_blocks"
     )
-    input_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/kid_playing_with_blocks_perceps.npy"
-    )
-    input_embeddings = np.load(input_dir, allow_pickle=True).item()  # dictionary
 
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
@@ -364,9 +371,8 @@ if __name__ == "__main__":
             state_segments.append((0, flags[0] - grey_out))
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
-    # Setup test datasets - one for images and one for embeddings
-    test_dataset_images = TestDataset(frames_dir, state_segments, transform=ImageTransforms, test_pct=0.1, val_pct=0.1, mode="test")
-    test_dataset_embeddings = TestDataset(input_embeddings, state_segments, transform=None, test_pct=0.1, val_pct=0.1, mode="test")
+    # Setup test dataset for raw images
+    test_dataset = TestDataset(frames_dir, state_segments, transform=ImageTransforms, test_pct=0.1, val_pct=0.1, mode="test")
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -417,9 +423,9 @@ if __name__ == "__main__":
     results = []
     
     # Evaluate both models with their corresponding datasets
-    for model_name, model, test_dataset, use_sd in [
-        ('Contrastive RBVAE', contrastive_model, test_dataset_images, False),
-        ('Percep RBVAE', percep_model, test_dataset_images, True)
+    for model_name, model, use_sd in [
+        ('Contrastive RBVAE', contrastive_model, False),
+        ('Percep RBVAE', percep_model, True)
     ]:
         for pert_name, pert_params in perturbations.items():
             if pert_name == 'clean':
