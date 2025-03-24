@@ -246,8 +246,10 @@ def calculate_state_consistency(model, test_dataset, device, sd_model=None, temp
             
             # Generate input tensor based on model type
             if sd_model is not None:  # Perceptual model
+                # Convert PIL image to numpy array and prepare for SD model
+                image = load_img_for_sd(image)
                 # Generate perceptual embedding from perturbed image
-                image = T.ToTensor()(image).to(device)
+                image = image.to(device)
                 embedding = generate_perceptual_embedding(image, sd_model, device)
                 input_tensor = torch.from_numpy(embedding)[None, None, :, :, :].to(device)
             else:  # Contrastive model
@@ -309,11 +311,12 @@ def load_model_from_config(config, ckpt, verbose=False):
     model.eval()
     return model
 
-def load_img(path):
+def load_img_for_sd(image):
     """Load an image and prepare it for the perceptual autoencoder."""
-    image = Image.open(path).convert("RGB")
+    # Ensure image is in RGB mode
+    image = image.convert("RGB")
     w, h = image.size
-    print(f"Loaded image of size ({w}, {h}) from {path}")
+    print(f"Processing image of size ({w}, {h})")
     
     # Resize to 1280x720 for consistency
     target_size = (1280, 720)
