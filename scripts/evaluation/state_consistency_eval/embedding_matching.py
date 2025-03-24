@@ -384,8 +384,9 @@ if __name__ == "__main__":
             state_segments.append((0, flags[0] - grey_out))
     state_segments.append((flags[-1] + grey_out + 1, last_frame + 1))
     
-    # Setup test dataset
-    test_dataset = TestDataset(input_embeddings, state_segments, transform=None)
+    # Setup test datasets - one for images and one for embeddings
+    test_dataset_images = TestDataset(frames_dir, state_segments, transform=ImageTransforms)
+    test_dataset_embeddings = TestDataset(input_embeddings, state_segments, transform=None)
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -425,8 +426,11 @@ if __name__ == "__main__":
     # Store results
     results = []
     
-    # Evaluate both models
-    for model_name, model in [('Contrastive RBVAE', contrastive_model), ('Percep RBVAE', percep_model)]:
+    # Evaluate both models with their corresponding datasets
+    for model_name, model, test_dataset in [
+        ('Contrastive RBVAE', contrastive_model, test_dataset_images),
+        ('Percep RBVAE', percep_model, test_dataset_embeddings)
+    ]:
         for pert_name, pert_params in perturbations.items():
             if pert_name == 'clean':
                 weighted_avg, state_percentages = calculate_state_consistency(
