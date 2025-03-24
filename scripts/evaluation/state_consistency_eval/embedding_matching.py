@@ -404,71 +404,160 @@ if __name__ == "__main__":
         'occlusion': {'coverage': 0.2}
     }
     
-    # Store results
-    results = []
+    # Number of trials to run
+    num_trials = 10
     
-    # Evaluate both models with their corresponding datasets
-    for model_name, model, use_sd in [
-        ('Contrastive RBVAE', contrastive_model, False),
-        ('Percep RBVAE', percep_model, True)
-    ]:
-        for pert_name, pert_params in perturbations.items():
-            if pert_name == 'clean':
-                weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, sd_model if use_sd else None,
-                    temperature=0.2, noise_ratio=0.1,
-                    transform=ImageTransforms if not use_sd else None
-                )
-            elif pert_name == 'gaussian_noise':
-                weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, sd_model if use_sd else None,
-                    temperature=0.2, noise_ratio=0.1,
-                    perturbation=add_gaussian_noise, perturbation_params=pert_params,
-                    transform=ImageTransforms if not use_sd else None
-                )
-            else:  # occlusion
-                weighted_avg, state_percentages = calculate_state_consistency(
-                    model, test_dataset, device, sd_model if use_sd else None,
-                    temperature=0.2, noise_ratio=0.1,
-                    perturbation=add_occlusion, perturbation_params=pert_params,
-                    transform=ImageTransforms if not use_sd else None
-                )
-            
-            # Store results
-            result = {
-                'Model': model_name,
-                'Perturbation': pert_name,
-                'Weighted Average': weighted_avg
-            }
-            for i, pct in enumerate(state_percentages):
-                result[f'State {i}'] = pct
-            results.append(result)
+    # Dictionary to store all results across trials
+    all_trial_results = {}
     
-    # Create DataFrame and save results
-    df = pd.DataFrame(results)
-    print("\nResults Table:")
-    print(df.to_string(index=False))
+    print(f"Running {num_trials} trials...")
     
-    # Save results to CSV
-    output_path = Path(__file__).parent.joinpath("state_consistency_results.csv")
-    df.to_csv(output_path, index=False)
-    print(f"\nResults saved to {output_path}")
+    # Run multiple trials
+    for trial in range(num_trials):
+        print(f"\nRunning trial {trial+1}/{num_trials}...")
+        
+        # Store results for this trial
+        trial_results = []
+        
+        # Evaluate both models with their corresponding datasets
+        for model_name, model, use_sd in [
+            ('Contrastive RBVAE', contrastive_model, False),
+            ('Percep RBVAE', percep_model, True)
+        ]:
+            for pert_name, pert_params in perturbations.items():
+                if pert_name == 'clean':
+                    weighted_avg, state_percentages = calculate_state_consistency(
+                        model, test_dataset, device, sd_model if use_sd else None,
+                        temperature=0.2, noise_ratio=0.1,
+                        transform=ImageTransforms if not use_sd else None
+                    )
+                elif pert_name == 'gaussian_noise':
+                    weighted_avg, state_percentages = calculate_state_consistency(
+                        model, test_dataset, device, sd_model if use_sd else None,
+                        temperature=0.2, noise_ratio=0.1,
+                        perturbation=add_gaussian_noise, perturbation_params=pert_params,
+                        transform=ImageTransforms if not use_sd else None
+                    )
+                else:  # occlusion
+                    weighted_avg, state_percentages = calculate_state_consistency(
+                        model, test_dataset, device, sd_model if use_sd else None,
+                        temperature=0.2, noise_ratio=0.1,
+                        perturbation=add_occlusion, perturbation_params=pert_params,
+                        transform=ImageTransforms if not use_sd else None
+                    )
+                
+                # Store results
+                result = {
+                    'Model': model_name,
+                    'Perturbation': pert_name,
+                    'Weighted Average': weighted_avg
+                }
+                for i, pct in enumerate(state_percentages):
+                    result[f'State {i}'] = pct
+                trial_results.append(result)
+        
+        # Store results for this trial
+        trial_df = pd.DataFrame(trial_results)
+        
+        # Print results for this trial
+        print(f"\nTrial {trial+1} Results:")
+        print(trial_df.to_string(index=False))
+        
+        # Save trial results to CSV
+        trial_output_path = Path(__file__).parent.joinpath(f"trial_{trial+1}_results.csv")
+        trial_df.to_csv(trial_output_path, index=False)
+        
+        # Store results in all_trial_results dictionary for averaging
+        for result in trial_results:
+            key = (result['Model'], result['Perturbation'])
+            if key not in all_trial_results:
+                all_trial_results[key] = {
+                    'Weighted Average': [result['Weighted Average']],
+                }
+                for i in range(len(flags) + 1):
+                    all_trial_results[key][f'State {i}'] = [result[f'State {i}']]
+            else:
+                all_trial_results[key]['Weighted Average'].append(result['Weighted Average'])
+                for i in range(len(flags) + 1):
+                    all_trial_results[key][f'State {i}'].append(result[f'State {i}'])
     
-    # Plot results
+    # Calculate average results across all trials
+    average_results = []
+    for key, values in all_trial_results.items():
+        model_name, pert_name = key
+        result = {
+            'Model': model_name,
+            'Perturbation': pert_name,
+            'Weighted Average': np.mean(values['Weighted Average'])
+        }
+        for i in range(len(flags) + 1):
+            result[f'State {i}'] = np.mean(values[f'State {i}'])
+        average_results.append(result)
+    
+    # Create DataFrame for average results
+    avg_df = pd.DataFrame(average_results)
+    
+    # Calculate standard deviations
+    std_results = []
+    for key, values in all_trial_results.items():
+        model_name, pert_name = key
+        result = {
+            'Model': model_name,
+            'Perturbation': pert_name,
+            'Weighted Average': np.std(values['Weighted Average'])
+        }
+        for i in range(len(flags) + 1):
+            result[f'State {i}'] = np.std(values[f'State {i}'])
+        std_results.append(result)
+    
+    # Create DataFrame for standard deviations
+    std_df = pd.DataFrame(std_results)
+    
+    # Print average results
+    print("\nAverage Results Across All Trials:")
+    print(avg_df.to_string(index=False))
+    
+    # Print standard deviations
+    print("\nStandard Deviations Across All Trials:")
+    print(std_df.to_string(index=False))
+    
+    # Save average results to CSV
+    avg_output_path = Path(__file__).parent.joinpath("average_results.csv")
+    avg_df.to_csv(avg_output_path, index=False)
+    
+    # Save standard deviations to CSV
+    std_output_path = Path(__file__).parent.joinpath("std_results.csv")
+    std_df.to_csv(std_output_path, index=False)
+    
+    print(f"\nAverage results saved to {avg_output_path}")
+    print(f"Standard deviations saved to {std_output_path}")
+    
+    # Plot average results
     plt.figure(figsize=(12, 6))
     x = np.arange(len(perturbations))
     width = 0.35
     
-    plt.bar(x - width/2, df[df['Model'] == 'Contrastive RBVAE']['Weighted Average'], width, label='Contrastive RBVAE')
-    plt.bar(x + width/2, df[df['Model'] == 'Percep RBVAE']['Weighted Average'], width, label='Percep RBVAE')
+    contrastive_avg = avg_df[avg_df['Model'] == 'Contrastive RBVAE']['Weighted Average'].values
+    percep_avg = avg_df[avg_df['Model'] == 'Percep RBVAE']['Weighted Average'].values
+    
+    contrastive_std = std_df[std_df['Model'] == 'Contrastive RBVAE']['Weighted Average'].values
+    percep_std = std_df[std_df['Model'] == 'Percep RBVAE']['Weighted Average'].values
+    
+    plt.bar(x - width/2, contrastive_avg, width, yerr=contrastive_std, 
+            label='Contrastive RBVAE', capsize=5)
+    plt.bar(x + width/2, percep_avg, width, yerr=percep_std, 
+            label='Percep RBVAE', capsize=5)
     
     plt.xlabel('Perturbation Type')
-    plt.ylabel('Weighted Average State Consistency')
-    plt.title('State Consistency Comparison')
+    plt.ylabel('Average Weighted State Consistency')
+    plt.title(f'State Consistency Comparison (Average of {num_trials} Trials)')
     plt.xticks(x, list(perturbations.keys()))
     plt.legend()
     
     # Save plot
-    plt.savefig(Path(__file__).parent.joinpath("state_consistency_comparison.png"))
+    plot_path = Path(__file__).parent.joinpath("average_state_consistency_comparison.png")
+    plt.savefig(plot_path)
     plt.close()
+    
+    print(f"Comparison plot saved to {plot_path}")
     
