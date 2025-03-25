@@ -340,12 +340,12 @@ def load_img_for_sd(image):
 if __name__ == "__main__":
     # Set up paths and state segmentation
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks"
+        "videos/frames/C10118_rgb"
     )
 
-    last_frame = 1425
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-    grey_out = 10
+    last_frame = 2469
+    flags = [157, 205, 441, 494, 557, 887, 909, 1010, 1048, 1315, 1388, 1438, 1702, 1847, 2096, 2174]
+    grey_out = 1
     
     # Create state segments
     state_segments = []
@@ -363,19 +363,19 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load RBVAE models
-    contrastive_latent_dim = 25
+    contrastive_latent_dim = 50
     contrastive_model = ContrastiveRBVAE(in_channels=3, out_channels=3, 
         latent_dim=contrastive_latent_dim, hidden_dim=contrastive_latent_dim)
-    percep_latent_dim = 25
+    percep_latent_dim = 50
     percep_model = PercepRBVAE(in_channels=4, out_channels=4,
         latent_dim=percep_latent_dim, hidden_dim=percep_latent_dim)
     
     # Load model checkpoints
     contrastive_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "scripts/evaluation/best_models/pixels/best_model_breezy-sweep-38.pt"
+        "scripts/evaluation/best_models/pixels/best_model_rare-sweep-12.pt"
     )
     percep_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "scripts/evaluation/best_models/perceps/best_model_grateful-sweep-19.pt"
+        "scripts/evaluation/best_models/perceps/best_model_fresh-sweep-9.pt"
     )
     
     contrastive_checkpoint = torch.load(contrastive_path, map_location=device)

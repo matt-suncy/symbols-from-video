@@ -131,7 +131,7 @@ def get_test_indices(state_segments, test_pct=0.1, val_pct=0.1):
 if __name__ == "__main__":
     # Set up paths and parameters
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks_1.mp4"
+        "videos/frames/kid_playing_with_blocks"
     )
     last_frame = 1425
     flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
@@ -154,9 +154,11 @@ if __name__ == "__main__":
 
     # Load and process for contrastive RBVAE
     contrastive_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/contrastive_RBVAE/saved_RBVAE"
+        "scripts/evaluation/best_models/pixels/best_model_breezy-sweep-38.pt"
     )
-    contrastive_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, latent_dim=32, hidden_dim=32)
+    contrastive_latent_dim = 25
+    contrastive_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, 
+        latent_dim=contrastive_latent_dim, hidden_dim=contrastive_latent_dim)
     checkpoint = torch.load(contrastive_model_path, map_location=torch.device('cpu'))
     contrastive_model.load_state_dict(checkpoint['model_state_dict'])
     contrastive_model.to(device)
@@ -164,9 +166,11 @@ if __name__ == "__main__":
 
     # Load and process for perceptual RBVAE
     percep_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "models/percep_RBVAE/saved_RBVAE"
+        "scripts/evaluation/best_models/perceps/best_model_grateful-sweep-19.pt"
     )
-    percep_model = PercepBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32)
+    percep_latent_dim = 25
+    percep_model = PercepBinaryVAE(in_channels=4, out_channels=4, 
+        latent_dim=percep_latent_dim, hidden_dim=percep_latent_dim)
     checkpoint = torch.load(percep_model_path, map_location=torch.device('cpu'))
     percep_model.load_state_dict(checkpoint['model_state_dict'])
     percep_model.to(device)
@@ -189,7 +193,7 @@ if __name__ == "__main__":
             # For contrastive model
             frame = ImageTransforms(Image.open(os.path.join(frames_dir, f"{idx:010d}.jpg")).convert("RGB"))
             input_tensor = frame[None, None, :, :, :].to(device)
-            latent = contrastive_model.encode(input_tensor, temperature=0.5, hard=True)
+            latent = contrastive_model.encode(input_tensor, temperature=0.2, hard=False)
             contrastive_latent_vectors.append(latent.cpu().numpy().squeeze())
 
             # For perceptual model
@@ -198,8 +202,8 @@ if __name__ == "__main__":
             if percep_embedding is None:
                 key = f"{idx:010d}"
                 percep_embedding = percep_embeddings.get(key)
-            percep_tensor = torch.tensor(percep_embedding, dtype=torch.float32)[None, None, :, :, :].to(device)
-            latent = percep_model.encode(percep_tensor, temperature=0.5, hard=True)
+            percep_tensor = torch.tensor(percep_embedding, dtype=torch.float32)[None, :, :, :].to(device)
+            latent = percep_model.encode(percep_tensor, temperature=0.2, hard=False)
             percep_latent_vectors.append(latent.cpu().numpy().squeeze())
 
             # Label only needs to be added once since it's the same for both
