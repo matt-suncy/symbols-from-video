@@ -65,11 +65,17 @@ def create_umap_visualization(latent_vectors, labels, title, output_path):
 
     # Visualize the UMAP projection
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
+    unique_labels = np.unique(labels)
+    for label in unique_labels:
+        mask = labels == label
+        plt.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1], 
+                   label=f'Class {int(label)}', 
+                   s=50,  # Increased dot size
+                   alpha=0.7)
     plt.title(title)
     plt.xlabel("UMAP Dimension 1")
     plt.ylabel("UMAP Dimension 2")
-    plt.colorbar(scatter, label="Frame Class")
+    plt.legend(title="Frame Class")
     plt.savefig(output_path)
     plt.close()
 
@@ -83,11 +89,17 @@ def create_tsne_visualization(latent_vectors, labels, title, output_path):
 
     # Visualize the t-SNE projection
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
+    unique_labels = np.unique(labels)
+    for label in unique_labels:
+        mask = labels == label
+        plt.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1], 
+                   label=f'Class {int(label)}', 
+                   s=50,  # Increased dot size
+                   alpha=0.7)
     plt.title(title)
     plt.xlabel("t-SNE Dimension 1")
     plt.ylabel("t-SNE Dimension 2")
-    plt.colorbar(scatter, label="Frame Class")
+    plt.legend(title="Frame Class")
     plt.savefig(output_path)
     plt.close()
 
@@ -101,11 +113,17 @@ def create_pca_visualization(latent_vectors, labels, title, output_path):
 
     # Visualize the PCA projection
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=labels, cmap="Spectral", s=5)
+    unique_labels = np.unique(labels)
+    for label in unique_labels:
+        mask = labels == label
+        plt.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1], 
+                   label=f'Class {int(label)}', 
+                   s=50,  # Increased dot size
+                   alpha=0.7)
     plt.title(title)
     plt.xlabel("First Principal Component")
     plt.ylabel("Second Principal Component")
-    plt.colorbar(scatter, label="Frame Class")
+    plt.legend(title="Frame Class")
     plt.savefig(output_path)
     plt.close()
 
