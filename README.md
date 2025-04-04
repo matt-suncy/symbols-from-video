@@ -14,6 +14,6 @@ After downloading the folders for each video, move them to the "videos" director
 
 ## Requirements
 
-Create a new Python 3.8 virtual environment and download from "requirements.txt".
+Create a new Python 3.8.5 virtual environment and download from "requirements.txt".
 
 ## Citing This Work
