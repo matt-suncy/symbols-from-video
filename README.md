@@ -8,7 +8,12 @@ This research investigates the extraction of state representations from videos, 
 
 ## Usage
 
+The videos used for training and model weights can be found here: https://drive.google.com/drive/folders/1RWonm0SOELsXIRCMIL7Ou1CyitJtQZLC?usp=sharing
+
+After downloading the folders for each video, move them to the "videos" directory.
+
 ## Requirements
 
+Create a new Python 3.8 virtual environment and download from "requirements.txt".
 
 ## Citing This Work
