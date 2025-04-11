@@ -13,8 +13,9 @@ from percep_RBVAE_train import (
     ShuffledStatePairDataset
 )
 
-FRAMES_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/C10118_rgb"
-EMBEDDINGS_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/C10118_perceps.npy"
+# NOTE: Change data paths here 
+FRAMES_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/chin_chess"
+EMBEDDINGS_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/chin_chess_perceps.npy"
 
 def train_with_config():
     """
@@ -188,7 +189,7 @@ def main():
             },
             'final_temperature': {
                 'distribution': 'uniform',
-                'min': 0.1,
+                'min': 0.2,
                 'max': 0.5
             },
             'anneal_rate': {
@@ -203,7 +204,7 @@ def main():
             },
             'noise_ratio': {
                 'distribution': 'uniform',
-                'min': 0.05,
+                'min': 0.1,
                 'max': 0.2
             },
             'margin': {
@@ -222,7 +223,7 @@ def main():
                 'max': 5
             },
             'num_epochs': {
-                'value': 25
+                'value': 750
             },
             # Fixed parameters
             'bernoulli_p': {
@@ -232,13 +233,13 @@ def main():
                 'value': EMBEDDINGS_PATH
             },
             'last_frame': {
-                'value': 12297
+                'value': 479
             },
             'flags': {
-                'value': [2836, 4132, 5114, 5640, 6922, 8390, 11518, 11962]
+                'value': [74, 206, 282, 389]
             },
             'grey_out': {
-                'value': 20
+                'value': 10
             }
         }
     }
@@ -260,4 +261,4 @@ if __name__ == "__main__":
     main() 
 
     # Command template to use:
-    # python percep_RBVAE_wandb_sweep.py --create_sweep --project_name PROJECT-NAME
+    # python percep_RBVAE_wandb_sweep.py --create_sweep --project_name contrastive-RBVAE-perceps

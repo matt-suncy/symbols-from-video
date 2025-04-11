@@ -14,6 +14,9 @@ from contrastive_RBVAE_train import (
     ImageTransforms
 )
 
+# NOTE: Change data path here
+FRAMES_PATH = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/C10118_rgb"
+
 def train_with_config():
     """
     Train a model with hyperparameters from wandb.config and log metrics
@@ -25,7 +28,7 @@ def train_with_config():
      
     # Set up paths and state segmentation
     frames_dir_value = config.get("frames_dir", 
-        "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1")
+        FRAMES_PATH)
     frames_dir = Path(frames_dir_value)
     last_frame = config.last_frame
     flags = config.flags
@@ -200,7 +203,7 @@ def main():
             },
             'noise_ratio': {
                 'distribution': 'uniform',
-                'min': 0.05,
+                'min': 0.1,
                 'max': 0.2
             },
             'margin': {
@@ -219,23 +222,23 @@ def main():
                 'max': 5
             },
             'num_epochs': {
-                'value': 50
+                'value': 100
             },
             # Fixed parameters
             'bernoulli_p': {
                 'value': 0.1
             },
             'frames_dir': {
-                'value': "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks_1"
+                'value': FRAMES_PATH
             },
             'last_frame': {
-                'value': 1425
+                'value': 12297
             },
             'flags': {
-                'value': [152, 315, 486, 607, 734, 871, 1153, 1343]
+                'value': [2836, 4132, 5114, 5640, 6922, 8390, 11518, 11962]
             },
             'grey_out': {
-                'value': 10
+                'value': 20
             }
         }
     }
@@ -256,4 +259,4 @@ def main():
 if __name__ == "__main__":
     main() 
 
-    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --project_name PROJECT-NAME
+    # python contrastive_RBVAE_wandb_sweep.py --create_sweep --project_name contrastive-RBVAE-pixels-bernoulli-point-one

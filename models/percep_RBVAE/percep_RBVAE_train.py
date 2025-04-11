@@ -313,7 +313,7 @@ class ShuffledStatePairDataset(Dataset):
         return self.num_items
 
     def __getitem__(self, idx):
-        """
+        """ 
         Collects the (idx)-th pair from each state's pair list, wraps them
         into a single tensor. If a state's pair list is shorter than idx,
         we wrap around mod the length (or handle however you prefer).
@@ -357,7 +357,7 @@ class ShuffledStatePairDataset(Dataset):
         if self.transform is not None:
             embedding = self.transform(embedding)
             
-        return embedding
+        return embedding.squeeze()
 
 def assign_label(frame_index, flags):
     """
@@ -719,18 +719,15 @@ class ContrastiveRBVAETrainer:
         return history
 
 if __name__ == "__main__":
-    # Set up paths and state segmentation
-    frames_path = Path(__file__).parent.parent.parent.joinpath("videos/frames/kid_playing_with_blocks_1") # Folder with frames
-    input_dir = Path(__file__).parent.parent.parent.joinpath("videos/kid_playing_with_blocks_perceps.npy")
+    # NOTE: Ch
+    frames_path = Path(__file__).parent.parent.parent.joinpath("videos/frames/C10118_rgb")
+    input_dir = Path(__file__).parent.parent.parent.joinpath("videos/C10118_rgb_perceps.npy")
     input_embeddings = np.load(input_dir, allow_pickle=True).item() # dictionary
 
-    # NOTE to self: you barely have to change any of the code for how the data is loaded in.
-    # The input_embeddings data is a dictionary to store embeddings (key: image path, value: embedding array)
-    # Each input embedding has shape [C=4, H=88, H=160]
-
-    last_frame = 1425
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-    grey_out = 10
+    # Change video related variables, refer to transition_flags.txt
+    last_frame = 12297
+    flags = [2836, 4132, 5114, 5640, 6922, 8390, 11518, 11962]
+    grey_out = 20
     
     # Create state segments
     state_segments = []
@@ -754,7 +751,7 @@ if __name__ == "__main__":
     # Update channels to match embedding dimensions (C=4)
     model = Seq2SeqBinaryVAE(in_channels=4, out_channels=4, latent_dim=32, hidden_dim=32).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    num_epochs = 50
+    num_epochs = 10
 
     # Create trainer
     trainer = ContrastiveRBVAETrainer(

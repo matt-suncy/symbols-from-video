@@ -114,11 +114,16 @@ def plot_hamming_distances(hamming_distances, model_name, output_path):
 if __name__ == "__main__":
     # Set up paths and parameters
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/kid_playing_with_blocks"
+        "videos/frames/ikea_asm_table"
     )
-    last_frame = 1425
-    flags = [152, 315, 486, 607, 734, 871, 1153, 1343]
-    grey_out = 10
+    # Load perceptual embeddings
+    percep_embeddings_path = Path(__file__).parent.parent.parent.parent.joinpath(
+        "videos/ikea_asm_table_perceps.npy"
+    )
+    percep_embeddings = np.load(percep_embeddings_path, allow_pickle=True).item()
+    last_frame = 2469
+    flags = [157, 205, 441, 494, 557, 887, 909, 1010, 1048, 1315, 1388, 1438, 1702, 1847, 2096, 2174]
+    grey_out = 1
     
     # Create state segments
     state_segments = []
@@ -137,9 +142,9 @@ if __name__ == "__main__":
 
     # Load Contrastive RBVAE model
     contrastive_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "scripts/evaluation/best_models/pixels/best_model_breezy-sweep-38.pt"
+        "scripts/evaluation/best_models/pixels/best_model_rare-sweep-12.pt"
     )
-    contrastive_latent_dim = 25
+    contrastive_latent_dim = 50
     contrastive_model = Seq2SeqBinaryVAE(in_channels=3, out_channels=3, 
         latent_dim=contrastive_latent_dim, hidden_dim=contrastive_latent_dim)
     checkpoint = torch.load(contrastive_model_path, map_location=torch.device('cpu'))
@@ -149,21 +154,15 @@ if __name__ == "__main__":
 
     # Load Perceptual RBVAE model
     percep_model_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "scripts/evaluation/best_models/perceps/best_model_grateful-sweep-19.pt"
+        "scripts/evaluation/best_models/perceps/best_model_fresh-sweep-9.pt"
     )
-    percep_latent_dim = 25
+    percep_latent_dim = 50
     percep_model = PercepBinaryVAE(in_channels=4, out_channels=4, 
         latent_dim=percep_latent_dim, hidden_dim=percep_latent_dim)
     checkpoint = torch.load(percep_model_path, map_location=torch.device('cpu'))
     percep_model.load_state_dict(checkpoint['model_state_dict'])
     percep_model.to(device)
     percep_model.eval()
-
-    # Load perceptual embeddings
-    percep_embeddings_path = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/kid_playing_with_blocks_perceps.npy"
-    )
-    percep_embeddings = np.load(percep_embeddings_path, allow_pickle=True).item()
 
     # Collect latent vectors for each state
     contrastive_state_vectors = [[] for _ in range(len(flags) + 1)]
@@ -178,7 +177,7 @@ if __name__ == "__main__":
             # For contrastive model
             frame = ImageTransforms(Image.open(os.path.join(frames_dir, f"{idx:010d}.jpg")).convert("RGB"))
             input_tensor = frame[None, None, :, :, :].to(device)
-            latent = contrastive_model.encode(input_tensor, temperature=0.2, hard=True)
+            latent = contrastive_model.encode(input_tensor, temperature=0.2, hard=True, noise_ratio=0.3)
             contrastive_state_vectors[state_label].append(latent.cpu().numpy().squeeze())
 
             # For perceptual model
@@ -188,7 +187,7 @@ if __name__ == "__main__":
                 key = f"{idx:010d}"
                 percep_embedding = percep_embeddings.get(key)
             percep_tensor = torch.tensor(percep_embedding, dtype=torch.float32)[None, :, :, :].to(device)
-            latent = percep_model.encode(percep_tensor, temperature=0.2, hard=True)
+            latent = percep_model.encode(percep_tensor, temperature=0.2, hard=True, noise_ratio=0.3)
             percep_state_vectors[state_label].append(latent.cpu().numpy().squeeze())
 
     # Find most common vector for each state

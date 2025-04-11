@@ -338,9 +338,9 @@ def load_img_for_sd(image):
     return 2. * image - 1.
 
 if __name__ == "__main__":
-    # Set up paths and state segmentation
+    # NOTE: Change data and model paths here
     frames_dir = Path(__file__).parent.parent.parent.parent.joinpath(
-        "videos/frames/C10118_rgb"
+        "videos/frames/ikea_asm_table"
     )
 
     last_frame = 2469
@@ -411,6 +411,9 @@ if __name__ == "__main__":
     all_trial_results = {}
     
     print(f"Running {num_trials} trials...")
+
+    temperature = 0.2
+    noise_ratio = 0.1
     
     # Run multiple trials
     for trial in range(num_trials):
@@ -428,20 +431,20 @@ if __name__ == "__main__":
                 if pert_name == 'clean':
                     weighted_avg, state_percentages = calculate_state_consistency(
                         model, test_dataset, device, sd_model if use_sd else None,
-                        temperature=0.2, noise_ratio=0.1,
+                        temperature=temperature, noise_ratio=noise_ratio,
                         transform=ImageTransforms if not use_sd else None
                     )
                 elif pert_name == 'gaussian_noise':
                     weighted_avg, state_percentages = calculate_state_consistency(
                         model, test_dataset, device, sd_model if use_sd else None,
-                        temperature=0.2, noise_ratio=0.1,
+                        temperature=temperature, noise_ratio=noise_ratio,
                         perturbation=add_gaussian_noise, perturbation_params=pert_params,
                         transform=ImageTransforms if not use_sd else None
                     )
                 else:  # occlusion
                     weighted_avg, state_percentages = calculate_state_consistency(
                         model, test_dataset, device, sd_model if use_sd else None,
-                        temperature=0.2, noise_ratio=0.1,
+                        temperature=temperature, noise_ratio=noise_ratio,
                         perturbation=add_occlusion, perturbation_params=pert_params,
                         transform=ImageTransforms if not use_sd else None
                     )

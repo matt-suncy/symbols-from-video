@@ -620,7 +620,6 @@ class ContrastiveRBVAETrainer:
         }
         
         # Calculate state consistency metric
-        consistency_score, state_percentages = self.calculate_state_consistency(self.final_temperature)
         avg_losses['consistency_score'] = consistency_score
         
         # Add individual state consistencies to metrics

@@ -211,7 +211,7 @@ if __name__ == "__main__":
             # For contrastive model
             frame = ImageTransforms(Image.open(os.path.join(frames_dir, f"{idx:010d}.jpg")).convert("RGB"))
             input_tensor = frame[None, None, :, :, :].to(device)
-            latent = contrastive_model.encode(input_tensor, temperature=0.2, hard=False)
+            latent = contrastive_model.encode(input_tensor, temperature=0.2, hard=False, noise_ratio=0.3)
             contrastive_latent_vectors.append(latent.cpu().numpy().squeeze())
 
             # For perceptual model
@@ -221,7 +221,7 @@ if __name__ == "__main__":
                 key = f"{idx:010d}"
                 percep_embedding = percep_embeddings.get(key)
             percep_tensor = torch.tensor(percep_embedding, dtype=torch.float32)[None, :, :, :].to(device)
-            latent = percep_model.encode(percep_tensor, temperature=0.2, hard=False)
+            latent = percep_model.encode(percep_tensor, temperature=0.2, hard=False, noise_ratio=0.3)
             percep_latent_vectors.append(latent.cpu().numpy().squeeze())
 
             # Label only needs to be added once since it's the same for both
