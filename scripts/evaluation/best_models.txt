@@ -1,0 +1,27 @@
+--- Trained on Pixels ---
+
+chin-chess:
+latent_dim = 25
+
+kid-playing-with-blocks:
+latent_dim = 25
+
+assembly-101:
+latent_dim = 100
+
+ikea-asm:
+latent_dim = 50
+
+--- Trained on Embeddings ---
+
+chin-chess:
+latent_dim = 25
+
+kid-playing-with-blocks:
+latent_dim = 25
+
+assembly-101:
+latent_dim = 25
+
+ikea-asm
+latent_dim = 50
