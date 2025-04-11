@@ -16,6 +16,8 @@ The model architectures, training, and hyperparameter sweep code can be found in
 
 Transition flags and other details about the videos concerning training can be found in "videos/frames/transition_flag.txt".
 
+Refer to "scripts/evaluation/best_models.txt" for relevant model information for running evaluations.
+
 ## Requirements
 
 Create a new Python 3.8.5 virtual environment and download from "requirements.txt".
