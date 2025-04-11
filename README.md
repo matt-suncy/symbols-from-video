@@ -12,6 +12,10 @@ The videos used for training and model weights can be found here: https://drive.
 
 After downloading the folders for each video, move them to the "videos" directory.
 
+The model architectures, training, and hyperparameter sweep code can be found in "models/contrastive_RBVAE" (trained on pixels) and "models/percep_RBVAE" (trained on precomputed embeddings).
+
+Transition flags and other details about the videos concerning training can be found in "videos/frames/transition_flag.txt".
+
 ## Requirements
 
 Create a new Python 3.8.5 virtual environment and download from "requirements.txt".
