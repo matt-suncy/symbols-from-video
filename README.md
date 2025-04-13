@@ -12,7 +12,7 @@ The videos used for training and model weights can be found here: https://drive.
 
 After downloading the folders for each video, move them to the "videos" directory.
 
-The model architectures, training, and hyperparameter sweep code can be found in "models/contrastive_RBVAE" (trained on pixels) and "models/percep_RBVAE" (trained on precomputed embeddings).
+The model architectures, training, and hyperparameter sweep code can be found in "models/contrastive_RBVAE" (trained on pixels) and "models/percep_RBVAE" (trained on precomputed embeddings). It is recommended that after downloading the models to a new directory with path "scripts/evaluation/best_models".
 
 Transition flags and other details about the videos concerning training can be found in "videos/frames/transition_flag.txt".
 
