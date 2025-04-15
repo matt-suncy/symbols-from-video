@@ -15,7 +15,7 @@ from ldm.util import instantiate_from_config
 # Change working directory to this file's directory
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 # Path to the folder containing input images
-IMAGE_FOLDER = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/kid_playing_with_blocks.mp4"
+IMAGE_FOLDER = "/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames/chin_chess"
 # Path to the model configuration file (YAML)
 CONFIG_PATH = os.path.join(BASE_DIR, "configs/stable-diffusion/v1-inference.yaml")
 # Path to the model checkpoint file
@@ -23,7 +23,7 @@ CKPT_PATH = os.path.join(BASE_DIR, "models/ldm/stable-diffusion-v1/model.ckpt")
 if not os.path.exists(CKPT_PATH):
     raise FileNotFoundError(f"Checkpoint not found: {CKPT_PATH}")
 # Output file to save embeddings
-OUTPUT_EMBEDDINGS_FILE = "embeddings.npy"
+OUTPUT_EMBEDDINGS_FILE = IMAGE_FOLDER.split('/')[-1] + "_perceps.npy"
 
 # ----------------------------
 # Utility functions
@@ -102,7 +102,8 @@ def main():
                 encoded = model.encode_first_stage(img)
                 latent_embedding = model.get_first_stage_encoding(encoded)
             # Convert the tensor to a numpy array and store it
-            embeddings[img_path] = latent_embedding.cpu().numpy()
+            # We only want the 10 digit index of the frame as the key (not the whole path)
+            embeddings[img_path.split('/')[-1]] = latent_embedding.cpu().numpy() 
         except Exception as e:
             print(f"Error processing {img_path}: {e}")
 

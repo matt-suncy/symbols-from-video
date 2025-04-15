@@ -85,6 +85,6 @@ def video_to_frames(video_path, frames_dir, overwrite=False, every=1):
 if __name__ == '__main__':
     # test it
     # Paths are weird here, you might have to change it once you're on a different machine
-    video_path = '/home/jovyan/Documents/latplan-temporal-segmentation/videos/lack_coffee_table_0007_oak_table_10_04_2019_08_28_15_42.mp4'
+    video_path = '/home/jovyan/Documents/latplan-temporal-segmentation/videos/chinchess_gettyimages-148739276-640_adpp.mp4'
     frames_dir = '/home/jovyan/Documents/latplan-temporal-segmentation/videos/frames'
     video_to_frames(video_path=video_path, frames_dir=frames_dir, overwrite=False, every=1)
