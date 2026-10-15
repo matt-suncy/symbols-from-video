@@ -46,6 +46,7 @@ Thumbs.db
 *.jpeg
 *.gif
 *.csv
+!/assets/*.png
 
 # Weights #
 ###########
@@ -63,3 +64,6 @@ Thumbs.db
 /models/percep_RBVAE/wandb
 
 /scripts/evaluation/best_models
+
+# Editable git checkouts made by pip (pip install -r requirements.txt in a conda env)
+/src/taming-transformers/

@@ -1,3 +1,7 @@
+# Install from the repository root with:  pip install -r requirements.txt
+# Targets Linux x86_64 with Python 3.8. The extra index below provides the CUDA 11.8 builds of
+# torch/torchvision/torchaudio; the NVIDIA runtime libraries are pulled in automatically.
+--extra-index-url https://download.pytorch.org/whl/cu118
 absl-py==2.1.0
 aiohappyeyeballs==2.4.3
 aiohttp==3.10.10
@@ -12,12 +16,11 @@ backcall==0.2.0
 beautifulsoup4==4.12.3
 bleach==6.1.0
 blinker==1.8.2
-Brotli @ file:///croot/brotli-split_1714483155106/work
 cachetools==5.3.3
 certifi==2024.2.2
 charset-normalizer==3.3.2
 click==8.1.7
--e git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1#egg=clip
+clip @ git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1
 contourpy==1.1.1
 cycler==0.12.1
 decorator==5.2.1
@@ -63,7 +66,6 @@ jupyter-core==5.7.2
 jupyterlab-pygments==0.3.0
 kiwisolver==1.4.7
 kornia==0.6.0
--e git+https://github.com/QuMuLab/latplan-temporal-segmentation.git@8f824cc00c97f4cdb21c70d8026e37222d440def#egg=latent_diffusion&subdirectory=src/stable-diffusion
 lazy-loader==0.4
 littleutils==0.2.2
 llvmlite==0.41.1
@@ -75,9 +77,6 @@ matplotlib-inline==0.1.7
 mccabe==0.6.1
 mdurl==0.1.2
 mistune==3.1.3
-mkl-fft==1.3.1
-mkl-random @ file:///tmp/build/80754af9/mkl_random_1626186064646/work
-mkl-service==2.4.0
 mpmath==1.3.0
 multidict==6.1.0
 narwhals==1.13.1
@@ -87,17 +86,6 @@ nbformat==5.10.4
 networkx==3.0
 numba==0.58.1
 numpy==1.24.1
-nvidia-cublas-cu11==11.11.3.6
-nvidia-cuda-cupti-cu11==11.8.87
-nvidia-cuda-nvrtc-cu11==11.8.89
-nvidia-cuda-runtime-cu11==11.8.89
-nvidia-cudnn-cu11==8.7.0.84
-nvidia-cufft-cu11==10.9.0.58
-nvidia-curand-cu11==10.3.0.86
-nvidia-cusolver-cu11==11.4.1.48
-nvidia-cusparse-cu11==11.7.5.86
-nvidia-nccl-cu11==2.20.5
-nvidia-nvtx-cu11==11.8.86
 oauthlib==3.2.2
 ogb==1.3.6
 omegaconf==2.1.1
@@ -151,15 +139,13 @@ scikit-learn==1.3.2
 scipy==1.9.1
 sentry-sdk==2.1.1
 setproctitle==1.3.3
-six @ file:///tmp/build/80754af9/six_1644875935023/work
+six==1.16.0
 smmap==5.0.1
 soupsieve==2.5
 stack-data==0.6.3
 streamlit==1.39.0
 sympy==1.12
 tabulate==0.9.0
--e git+https://github.com/CompVis/taming-transformers.git@3ba01b241669f5ade541ce990f7650a3b8f65318#egg=taming_transformers
-tb-nightly==2.14.0a20230808
 tenacity==9.0.0
 tensorboard==2.14.0
 tensorboard-data-server==0.7.2
@@ -169,17 +155,16 @@ tifffile==2023.7.10
 tinycss2==1.2.1
 tokenizers==0.12.1
 toml==0.10.2
-torch==2.3.0+cu118
+torch==2.3.0
 torch-fidelity==0.3.0
-torchaudio==2.3.0+cu118
+torchaudio==2.3.0
 torchmetrics==0.6.0
-torchvision==0.18.0+cu118
+torchvision==0.18.0
 tornado==6.4.1
 tqdm==4.66.4
 traitlets==5.14.3
 transformers==4.19.2
-triton==2.3.0
-typing-extensions @ file:///croot/typing_extensions_1715268824938/work
+typing-extensions==4.11.0
 tzdata==2024.1
 umap-learn==0.5.7
 urllib3==2.2.1
@@ -195,3 +180,10 @@ yapf==0.29.0
 yarg==0.1.9
 yarl==1.15.2
 zipp==3.20.2
+
+# Packages installed in editable "compat" mode: taming-transformers and the local Latent Diffusion
+# code (ldm) are missing __init__.py files, so they only import correctly when their source directory
+# is placed on sys.path, which is what compat mode does. Requires pip >= 23.1.
+-e git+https://github.com/CompVis/taming-transformers.git@3ba01b241669f5ade541ce990f7650a3b8f65318#egg=taming-transformers --config-settings editable_mode=compat
+-e ./src/stable-diffusion --config-settings editable_mode=compat
+-e . --config-settings editable_mode=compat
